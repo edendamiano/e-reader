@@ -1,25 +1,17 @@
 import { createHash } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
-import { extname } from "node:path";
-import { disableTypes } from "image-size";
-import { PublicationParsePromise } from "r2-shared-js/dist/es8-es2017/src/parser/publication-parser";
-import type { Link } from "r2-shared-js/dist/es8-es2017/src/models/publication-link";
-import type { Publication } from "r2-shared-js/dist/es8-es2017/src/models/publication";
+import { extname, posix } from "node:path";
+import { XMLParser } from "fast-xml-parser";
 import yauzl, { type Entry } from "yauzl";
 import type { OpenPublicationResult, PublicationDto, PublicationLinkDto } from "../../shared/src/types";
 
 const MAX_EPUB_BYTES = 1_000_000_000;
 const MAX_DOCUMENT_BYTES = 16_000_000;
-const MAX_INITIAL_SPINE_SCAN = 16;
+const MAX_IMAGE_BYTES = 16_000_000;
 const MAX_ARCHIVE_ENTRIES = 20_000;
 const MAX_ARCHIVE_EXPANDED_BYTES = 2_000_000_000;
 const MAX_ENTRY_EXPANDED_BYTES = 256_000_000;
 const MAX_SUSPICIOUS_COMPRESSION_RATIO = 1_000;
-
-// image-size <= 2.0.2 has no patched release for infinite-loop bugs in these
-// non-core EPUB formats. Readium only needs ordinary EPUB raster dimensions,
-// so remove the vulnerable detectors before any publication is parsed.
-disableTypes(["heif", "icns", "jxl", "jxl-stream"]);
 
 export function assertSafeZipEntryName(fileName: string): void {
   const candidates = [fileName];
@@ -109,27 +101,6 @@ export function preflightEpubArchive(filePath: string): Promise<void> {
   });
 }
 
-function localizedString(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.values(value as Record<string, unknown>);
-    const first = entries.find((entry): entry is string => typeof entry === "string");
-    return first ?? "";
-  }
-  return "";
-}
-
-function linkToDto(link: Link): PublicationLinkDto {
-  return {
-    href: link.HrefDecoded ?? link.Href,
-    type: link.TypeLink || undefined,
-    title: link.Title || undefined,
-    children: link.Children?.map(linkToDto),
-  };
-}
-
 export async function sha256File(filePath: string): Promise<string> {
   const hash = createHash("sha256");
   const stream = createReadStream(filePath);
@@ -139,12 +110,12 @@ export async function sha256File(filePath: string): Promise<string> {
   return hash.digest("hex");
 }
 
-function cleanZipHref(href: string): string {
+export function cleanZipHref(href: string): string {
   const withoutFragment = href.split("#", 1)[0]?.split("?", 1)[0] ?? href;
   return decodeURIComponent(withoutFragment.replace(/^\/+/, "")).replace(/\\/g, "/");
 }
 
-export function readZipText(filePath: string, href: string): Promise<string> {
+export function readZipBuffer(filePath: string, href: string, maxBytes = MAX_DOCUMENT_BYTES): Promise<Buffer> {
   const wanted = cleanZipHref(href);
   return new Promise((resolve, reject) => {
     yauzl.open(filePath, { lazyEntries: true, autoClose: true }, (openError, zip) => {
@@ -174,8 +145,8 @@ export function readZipText(filePath: string, href: string): Promise<string> {
           zip.readEntry();
           return;
         }
-        if (entry.uncompressedSize > MAX_DOCUMENT_BYTES) {
-          fail(new Error(`EPUB document exceeds ${MAX_DOCUMENT_BYTES} bytes.`));
+        if (entry.uncompressedSize > maxBytes) {
+          fail(new Error(`EPUB resource exceeds ${maxBytes} bytes.`));
           return;
         }
         zip.openReadStream(entry, (streamError, stream) => {
@@ -187,7 +158,7 @@ export function readZipText(filePath: string, href: string): Promise<string> {
           let size = 0;
           stream.on("data", (chunk: Buffer) => {
             size += chunk.length;
-            if (size > MAX_DOCUMENT_BYTES) {
+            if (size > maxBytes) {
               stream.destroy(new Error("EPUB document expanded beyond the safe limit."));
               return;
             }
@@ -197,7 +168,7 @@ export function readZipText(filePath: string, href: string): Promise<string> {
           stream.on("end", () => {
             if (!settled) {
               settled = true;
-              resolve(Buffer.concat(chunks).toString("utf8"));
+              resolve(Buffer.concat(chunks));
               zip.close();
             }
           });
@@ -208,17 +179,204 @@ export function readZipText(filePath: string, href: string): Promise<string> {
   });
 }
 
-function publicationToDto(publication: Publication, sourcePath: string, bookId: string): PublicationDto {
-  const title = localizedString(publication.Metadata?.Title) || "Untitled";
-  const author = publication.Metadata?.Author?.map((person) => localizedString(person.Name)).filter(Boolean).join(", ") || "Unknown author";
+export async function readZipText(filePath: string, href: string): Promise<string> {
+  return (await readZipBuffer(filePath, href)).toString("utf8");
+}
+
+const IMAGE_MIME = new Map<string, string>([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+]);
+
+function resolvePublicationAsset(documentHref: string, source: string): string | undefined {
+  const withoutFragment = source.split("#", 1)[0]?.split("?", 1)[0]?.trim() ?? "";
+  if (!withoutFragment || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(withoutFragment)) return undefined;
+  let decoded = withoutFragment;
+  try {
+    decoded = decodeURIComponent(withoutFragment);
+  } catch {
+    return undefined;
+  }
+  const rootRelative = decoded.startsWith("/");
+  const resolved = posix.normalize(rootRelative
+    ? decoded.replace(/^\/+/, "")
+    : posix.join(posix.dirname(cleanZipHref(documentHref)), decoded));
+  try {
+    assertSafeZipEntryName(resolved);
+  } catch {
+    return undefined;
+  }
+  return resolved;
+}
+
+export async function readEpubResource(filePath: string, href: string): Promise<string> {
+  let html = await readZipText(filePath, href);
+  const sources = new Set<string>();
+  const sourcePattern = /<img\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/gi;
+  for (const match of html.matchAll(sourcePattern)) {
+    if (match[2]) sources.add(match[2]);
+  }
+  const replacements = new Map<string, string>();
+  for (const source of sources) {
+    const asset = resolvePublicationAsset(href, source);
+    const mime = asset ? IMAGE_MIME.get(extname(asset).toLowerCase()) : undefined;
+    if (!asset || !mime) {
+      replacements.set(source, "");
+      continue;
+    }
+    try {
+      const bytes = await readZipBuffer(filePath, asset, MAX_IMAGE_BYTES);
+      replacements.set(source, `data:${mime};base64,${bytes.toString("base64")}`);
+    } catch {
+      replacements.set(source, "");
+    }
+  }
+  html = html.replace(sourcePattern, (full, quote: string, source: string) => {
+    const replacement = replacements.get(source);
+    return replacement === undefined ? full : full.replace(`${quote}${source}${quote}`, `${quote}${replacement}${quote}`);
+  });
+  return html;
+}
+
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "",
+  removeNSPrefix: true,
+  parseTagValue: false,
+  trimValues: true,
+});
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return value === undefined || value === null ? [] : Array.isArray(value) ? value : [value];
+}
+
+function textValue(value: unknown): string {
+  if (typeof value === "string" || typeof value === "number") return String(value).trim();
+  if (Array.isArray(value)) return value.map(textValue).filter(Boolean).join(" ");
+  const object = record(value);
+  if (object["#text"] !== undefined) return textValue(object["#text"]);
+  return Object.entries(object)
+    .filter(([key]) => !["href", "src", "id", "type", "properties", "media-type", "idref", "linear", "class"].includes(key))
+    .map(([, entry]) => textValue(entry))
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
+function publicationHref(basePath: string, href: string): string | undefined {
+  if (!href || /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(href)) return undefined;
+  const [pathPart, fragment] = href.split("#", 2);
+  const normalized = posix.normalize(pathPart?.startsWith("/")
+    ? pathPart.replace(/^\/+/, "")
+    : posix.join(posix.dirname(basePath), pathPart ?? ""));
+  try {
+    assertSafeZipEntryName(normalized);
+  } catch {
+    return undefined;
+  }
+  return fragment ? `${normalized}#${fragment}` : normalized;
+}
+
+function navList(olValue: unknown, navPath: string): PublicationLinkDto[] {
+  const ol = record(olValue);
+  return asArray(ol.li).flatMap((entry): PublicationLinkDto[] => {
+    const li = record(entry);
+    const anchors = asArray(li.a);
+    const anchor = record(anchors[0]);
+    const href = typeof anchor.href === "string" ? publicationHref(navPath, anchor.href) : undefined;
+    const children = asArray(li.ol).flatMap((nested) => navList(nested, navPath));
+    if (!href) return children;
+    return [{ href, title: textValue(anchor) || textValue(li.span) || undefined, children: children.length ? children : undefined }];
+  });
+}
+
+function collectNamed(value: unknown, name: string, output: Record<string, unknown>[] = []): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectNamed(entry, name, output));
+    return output;
+  }
+  const object = record(value);
+  for (const [key, entry] of Object.entries(object)) {
+    if (key === name) asArray(entry).forEach((candidate) => output.push(record(candidate)));
+    collectNamed(entry, name, output);
+  }
+  return output;
+}
+
+async function parseNav(filePath: string, navPath: string): Promise<PublicationLinkDto[]> {
+  const parsed = xmlParser.parse(await readZipText(filePath, navPath)) as unknown;
+  const nav = collectNamed(parsed, "nav").find((candidate) => String(candidate.type ?? "").split(/\s+/).includes("toc"))
+    ?? collectNamed(parsed, "nav")[0];
+  if (!nav) return [];
+  return asArray(nav.ol).flatMap((ol) => navList(ol, navPath));
+}
+
+function ncxPoints(value: unknown, ncxPath: string): PublicationLinkDto[] {
+  return asArray(value).flatMap((entry): PublicationLinkDto[] => {
+    const point = record(entry);
+    const content = record(point.content);
+    const href = typeof content.src === "string" ? publicationHref(ncxPath, content.src) : undefined;
+    const children = ncxPoints(point.navPoint, ncxPath);
+    if (!href) return children;
+    return [{
+      href,
+      title: textValue(record(point.navLabel).text) || undefined,
+      children: children.length ? children : undefined,
+    }];
+  });
+}
+
+async function parseNcx(filePath: string, ncxPath: string): Promise<PublicationLinkDto[]> {
+  const parsed = record(xmlParser.parse(await readZipText(filePath, ncxPath)));
+  const ncx = record(parsed.ncx);
+  return ncxPoints(record(ncx.navMap).navPoint, ncxPath);
+}
+
+async function parsePublication(filePath: string, bookId: string): Promise<PublicationDto> {
+  const container = record(xmlParser.parse(await readZipText(filePath, "META-INF/container.xml")));
+  const rootfiles = record(record(container.container).rootfiles);
+  const rootfile = record(asArray(rootfiles.rootfile)[0]);
+  const opfPath = typeof rootfile["full-path"] === "string" ? cleanZipHref(rootfile["full-path"]) : "";
+  if (!opfPath) throw new Error("EPUB container does not name a package document.");
+  const parsedPackage = record(xmlParser.parse(await readZipText(filePath, opfPath)));
+  const packageDocument = record(parsedPackage.package);
+  const metadata = record(packageDocument.metadata);
+  const manifest = asArray(record(packageDocument.manifest).item).map(record);
+  const manifestById = new Map(manifest.flatMap((item) => typeof item.id === "string" ? [[item.id, item] as const] : []));
+  const spine = record(packageDocument.spine);
+  const readingOrder = asArray(spine.itemref).flatMap((entry): PublicationLinkDto[] => {
+    const itemref = record(entry);
+    if (String(itemref.linear ?? "yes").toLowerCase() === "no") return [];
+    const item = typeof itemref.idref === "string" ? manifestById.get(itemref.idref) : undefined;
+    const href = item && typeof item.href === "string" ? publicationHref(opfPath, item.href) : undefined;
+    return href ? [{ href, type: typeof item?.["media-type"] === "string" ? item["media-type"] : undefined }] : [];
+  });
+  const navItem = manifest.find((item) => String(item.properties ?? "").split(/\s+/).includes("nav"));
+  const ncxItem = (typeof spine.toc === "string" ? manifestById.get(spine.toc) : undefined)
+    ?? manifest.find((item) => item["media-type"] === "application/x-dtbncx+xml");
+  let toc: PublicationLinkDto[] = [];
+  if (navItem && typeof navItem.href === "string") {
+    const navPath = publicationHref(opfPath, navItem.href);
+    if (navPath) toc = await parseNav(filePath, cleanZipHref(navPath));
+  } else if (ncxItem && typeof ncxItem.href === "string") {
+    const ncxPath = publicationHref(opfPath, ncxItem.href);
+    if (ncxPath) toc = await parseNcx(filePath, cleanZipHref(ncxPath));
+  }
   return {
     bookId,
-    sourcePath,
-    title,
-    author,
-    languages: publication.Metadata?.Language ?? [],
-    readingOrder: publication.Spine?.map(linkToDto) ?? [],
-    toc: publication.TOC?.map(linkToDto) ?? [],
+    sourcePath: filePath,
+    title: textValue(metadata.title) || "Untitled",
+    author: asArray(metadata.creator).map(textValue).filter(Boolean).join(", ") || "Unknown author",
+    languages: asArray(metadata.language).map(textValue).filter(Boolean),
+    readingOrder,
+    toc,
   };
 }
 
@@ -234,9 +392,9 @@ function hasReadableText(html: string): boolean {
   return text.length >= 20;
 }
 
-export async function openEpub(filePath: string): Promise<OpenPublicationResult> {
+export async function openEpub(filePath: string, preferredHref?: string): Promise<OpenPublicationResult> {
   if (extname(filePath).toLowerCase() !== ".epub") {
-    throw new Error("Phase 0 EPUB adapter only accepts .epub files.");
+    throw new Error("EPUB adapter only accepts .epub files.");
   }
   const stat = await fs.stat(filePath);
   if (!stat.isFile() || stat.size <= 0 || stat.size > MAX_EPUB_BYTES) {
@@ -244,28 +402,25 @@ export async function openEpub(filePath: string): Promise<OpenPublicationResult>
   }
 
   await preflightEpubArchive(filePath);
-  const [bookId, parsed] = await Promise.all([sha256File(filePath), PublicationParsePromise(filePath)]);
-  try {
-    const publication = publicationToDto(parsed, filePath, bookId);
-    const first = publication.readingOrder[0];
-    if (!first) {
-      throw new Error("EPUB has no linear reading order.");
-    }
+  const bookId = await sha256File(filePath);
+  const publication = await parsePublication(filePath, bookId);
+  const first = publication.readingOrder[0];
+  if (!first) {
+    throw new Error("EPUB has no linear reading order.");
+  }
 
-    let selected = first;
-    let rawHtml = await readZipText(filePath, first.href);
-    if (!hasReadableText(rawHtml)) {
-      for (const candidate of publication.readingOrder.slice(1, MAX_INITIAL_SPINE_SCAN)) {
-        const candidateHtml = await readZipText(filePath, candidate.href);
-        if (hasReadableText(candidateHtml)) {
-          selected = candidate;
-          rawHtml = candidateHtml;
-          break;
-        }
+  const preferredBase = preferredHref ? cleanZipHref(preferredHref) : "";
+  let selected = publication.readingOrder.find((candidate) => cleanZipHref(candidate.href) === preferredBase) ?? first;
+  let rawHtml = await readEpubResource(filePath, selected.href);
+  if (!preferredBase && !hasReadableText(rawHtml)) {
+    for (const candidate of publication.readingOrder.slice(1)) {
+      const candidateHtml = await readEpubResource(filePath, candidate.href);
+      if (hasReadableText(candidateHtml)) {
+        selected = candidate;
+        rawHtml = candidateHtml;
+        break;
       }
     }
-    return { publication, href: selected.href, rawHtml };
-  } finally {
-    parsed.freeDestroy();
   }
+  return { publication, href: selected.href, rawHtml };
 }

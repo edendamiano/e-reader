@@ -1,6 +1,7 @@
 import { _electron as electron, expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 const repoRoot = resolve(__dirname, "..");
@@ -9,12 +10,15 @@ const screenshotPath = resolve(repoRoot, "../../png/phase0-tts.png");
 test("persistent offline TTS caches audio and advances SpeechUnit playback", async () => {
   test.setTimeout(180_000);
   await mkdir(resolve(screenshotPath, ".."), { recursive: true });
+  const dataRoot = await mkdtemp(resolve(tmpdir(), "ereader-phase0-tts-"));
   const application = await electron.launch({
     executablePath: resolve(repoRoot, "node_modules/electron/dist/electron.exe"),
     args: [repoRoot, "--smoke-test"],
     cwd: repoRoot,
     env: {
       ...process.env,
+      EREADER_DATA_ROOT: dataRoot,
+      EREADER_STARTUP_MODE: "fixture",
       EREADER_TTS_PYTHON: resolve(repoRoot, "tts/.venv/Scripts/python.exe"),
       HF_HUB_OFFLINE: "1",
       TRANSFORMERS_OFFLINE: "1",
@@ -74,5 +78,6 @@ test("persistent offline TTS caches audio and advances SpeechUnit playback", asy
     await expect(page.locator("body")).not.toContainText("朗读暂时不可用");
   } finally {
     await application.close();
+    await rm(dataRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });

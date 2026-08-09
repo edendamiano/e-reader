@@ -54,7 +54,7 @@ class EngineRouter:
             return {"ready": False, "detail": self.last_error or "No local TTS engine is available."}
         return self.engine.health() | {"ready": True}
 
-    def _cache_path(self, engine: TTSEngine, text: str, speed: float) -> Path:
+    def _cache_path(self, engine: TTSEngine, text: str, speed: float, context: dict[str, Any] | None = None) -> Path:
         payload = {
             "model": engine.model_version,
             "voice": engine.voice_version,
@@ -63,7 +63,9 @@ class EngineRouter:
             "prosody": engine.prosody_profile_version,
         }
         digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-        return self.cache_root / engine.name / f"{digest}.wav"
+        candidate = str((context or {}).get("bookId", ""))
+        book_id = candidate.lower() if len(candidate) == 64 and all(character in "0123456789abcdefABCDEF" for character in candidate) else "_shared"
+        return self.cache_root / engine.name / book_id / f"{digest}.wav"
 
     @staticmethod
     def _duration(path: Path) -> int:
@@ -78,7 +80,7 @@ class EngineRouter:
         normalized = self.normalizer.normalize(text)
         context = dict(context)
         context["language"] = context.get("language") or detect_language(normalized)
-        output = self._cache_path(self.engine, normalized, speed)
+        output = self._cache_path(self.engine, normalized, speed, context)
         if output.is_file():
             return AudioResult(output, self._duration(output), self.engine.name, cache_hit=True)
         temp = output.with_suffix(f".{os.getpid()}.tmp.wav")

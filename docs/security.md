@@ -1,31 +1,32 @@
-# Security model
+# Security boundary
 
-## Trust boundary
+Status: enforced and regression-tested in the Phase 1/2 build.
 
-Every EPUB/AZW3 is hostile input. Publication content may not execute JavaScript, access Electron or Node, open files, spawn processes, navigate the host window, or make network requests.
+## Electron
 
-## Enforced in the Phase 0 build
+- `nodeIntegration=false`, `nodeIntegrationInWorker=false`, `contextIsolation=true`, `sandbox=true`, `webSecurity=true`, no webviews, and a frozen narrow preload bridge.
+- New windows and unexpected top-level navigation are denied. IPC checks the exact trusted renderer file URL before every operation.
+- Session requests allow only files below the built renderer directory plus `data:`, `blob:`, and DevTools. HTTP(S), loopback, arbitrary `file:` paths, malformed URLs, and dangerous schemes are blocked.
+- Normal reading never initiates network access. TTS model downloads are disabled unless a developer explicitly sets `EREADER_ALLOW_MODEL_DOWNLOAD=1`.
 
-- BrowserWindow: `nodeIntegration=false`, `nodeIntegrationInWorker=false`, `contextIsolation=true`, `sandbox=true`, `webSecurity=true`, and `webviewTag=false`.
-- Preload: one bundled file with a frozen, narrow IPC bridge; no generic `send`, shell, path, or filesystem method.
-- IPC: sender URL and payload type/length/range checks.
-- Navigation: new windows denied; unexpected top-level navigation prevented.
-- Permissions: all permission requests and checks denied.
-- Network: session request filter permits only `file:`, `data:`, `blob:`, and DevTools; HTTP(S) is denied.
-- EPUB markup: DOMPurify 3.4.13, active/form/embed/style elements removed, URL and event attributes removed, and an iframe CSP with `script-src 'none'`, `connect-src 'none'`, `font-src 'none'`, and `frame-src 'none'`.
-- ZIP resources: packed size, entry count, per-entry and total expanded-size limits, suspicious compression-ratio rejection, encrypted-entry rejection, traversal/control-character name rejection (including double-encoded traversal), and exact entry reads only. `META-INF/license.lcpl` is rejected before Readium parsing so the unsupported DRM/LCP and legacy request path is never entered.
-- Image metadata: Readium's transitive `image-size@2.0.2` currently has no patched release for the [ICNS](https://github.com/advisories/GHSA-w3rx-r6r6-pgpr) and [JXL/HEIF](https://github.com/advisories/GHSA-5p2g-fcmc-qvqq) infinite-loop advisories. Those four non-core EPUB detectors are disabled process-wide before Readium parses any publication, with a malicious ICNS regression test.
-- TTS: no localhost server; JSON Lines over a hidden Python isolated-mode (`-I`) child process with explicit UTF-8; bounded IPC text/speed inputs; returned audio paths must resolve below the cache root.
-- TTS network policy: `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` are set by default. Model downloading is possible only when a developer explicitly starts the app with `EREADER_ALLOW_MODEL_DOWNLOAD=1`; normal reading and synthesis use local files.
-- TTS failures: technical stderr is written to the local application log while the renderer receives only the generic `朗读暂时不可用。` state. The sidecar has a one-restart budget and deliberate application shutdown cannot trigger a restart.
-- AZW3: preflight header parsing rejects non-KF8 and non-zero encryption types before conversion; `mobitool.exe` is a fixed executable invoked without a shell, its build disables encryption, and conversion is confined to a fresh temporary directory with a timeout.
+## Hostile publications
 
-The generated malicious fixture includes a script, an event handler, an external tracking image, and a remote iframe. The Electron smoke test confirms that the script markers never appear and publication networking is unavailable.
+- ZIP preflight limits packed size, entry count, per-entry and total expansion, compression ratio, encryption, and path/control characters, including repeatedly encoded traversal.
+- `META-INF/license.lcpl` and encrypted ZIP entries are rejected before package parsing. The AZW3 header must be unencrypted KF8; libmobi contains no decryption support.
+- XML parsing is non-executing. Only manifest spine/NAV/NCX links resolving inside the archive are accepted.
+- Chapter HTML passes DOMPurify with scripts, iframes, objects, forms, SVG/MathML, style/link/base elements, event handlers, and navigation attributes forbidden.
+- Only bounded local PNG/JPEG/GIF/WebP bytes are rewritten to image data URLs. Remote URLs, SVG, HEIF, JXL, ICNS, local filesystem URLs, and unsupported types are removed without invoking metadata decoders.
+- The publication iframe has no scripts, Node, process, filesystem, arbitrary network, forms, objects, nested frames, or external fonts.
 
-## Open security decisions
+## Filesystem and child processes
 
-`r2-navigator-js@1.25.7` creates publication webviews with `sandbox=0`, so it was evaluated but removed from the shipped direct dependencies. The remaining Readium parser dependency still brings legacy advisories through `r2-lcp-js`, `request`, and `image-size`; they are documented rather than hidden, and publication resources stay behind the stricter parser/sanitizer boundary. The stock navigator is not enabled until a bundled sandboxed preload and a reviewed dependency patch set pass the hostile fixture suite.
+- Library IPC accepts at most 100 file paths per import and validates types/lengths. SHA-256 is the duplicate identity.
+- Imports use app-owned random staging directories and cleanup/rollback. Deletes operate only on a validated 64-hex book directory under the configured Library and never on source files.
+- AZW3 conversion uses a fixed executable and argument vector, `execFile` without a shell, a fresh temporary directory, a 120-second timeout, and bounded output capture.
+- TTS is an isolated `python -I -X utf8 -u` child using inherited pipes, no listening socket. Returned paths must resolve below the configured cache root.
 
-The 2026-08-10 production-dependency audit reports 9 static findings (5 moderate, 2 high, 2 critical). Removing the unused navigator/streamer cut 160 installed packages and reduced the count from 12. The two `image-size` high findings are mitigated by disabling the affected detectors before any untrusted parse. The remaining `request` family is pulled by `r2-lcp-js`; the application accepts only a local `.epub` file path and rejects the LCP license entry before Readium runs, so that remote/DRM route is outside the accepted execution path. Nevertheless, the repository does not claim a zero-advisory dependency graph: replacing or patching the parser chain remains a release gate.
+## Dependency result
 
-The remaining publication-security decision is the hardened production paginator. The libmobi AZW3 sidecar boundary is now implemented and covered by both a real no-DRM KF8 fixture and a synthetic protected-header rejection fixture; no DRM key or decryption path is implemented.
+The initial Phase 1 audit reproduced 9 production findings inherited through `r2-shared-js`, `r2-lcp-js`, `request`, and `image-size`. The narrow Readium metadata adapter was replaced with the already-used safe ZIP/XML components and validated against four real publications before those packages were removed. `npm audit --omit=dev` now reports 0 findings. The exact before/after analysis is in `dependency-security.md`.
+
+This does not remove the need to re-run the audit and Electron security review before packaging. A full third-party notice bundle and installer signing/hardening remain release gates.

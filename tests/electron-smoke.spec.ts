@@ -1,5 +1,6 @@
 import { _electron as electron, expect, test } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
 const repoRoot = resolve(__dirname, "..");
@@ -7,11 +8,12 @@ const screenshotPath = resolve(repoRoot, "../../png/phase0-reader.png");
 
 test("secure Electron window renders and paginates the real EPUB fixture", async () => {
   await mkdir(resolve(screenshotPath, ".."), { recursive: true });
+  const dataRoot = await mkdtemp(resolve(tmpdir(), "ereader-phase0-epub-"));
   const application = await electron.launch({
     executablePath: resolve(repoRoot, "node_modules/electron/dist/electron.exe"),
     args: [repoRoot, "--smoke-test"],
     cwd: repoRoot,
-    env: { ...process.env, EREADER_TTS_PYTHON: resolve(repoRoot, "tts/.missing/python.exe") },
+    env: { ...process.env, EREADER_DATA_ROOT: dataRoot, EREADER_STARTUP_MODE: "fixture", EREADER_TTS_PYTHON: resolve(repoRoot, "tts/.missing/python.exe") },
   });
   try {
     const page = await application.firstWindow();
@@ -33,6 +35,8 @@ test("secure Electron window renders and paginates the real EPUB fixture", async
     expect(await bookFrame.locator("[data-speech-unit-id]").count()).toBeGreaterThan(40);
     expect(await page.evaluate(() => window.__EPUB_SCRIPT_EXECUTED__)).toBeUndefined();
     expect(await page.evaluate(() => window.__EPUB_HANDLER_EXECUTED__)).toBeUndefined();
+    await expect(page.evaluate(() => fetch("https://example.invalid/tracker").then(() => "allowed").catch(() => "blocked"))).resolves.toBe("blocked");
+    await expect(page.evaluate(() => fetch("file:///C:/Windows/win.ini").then(() => "allowed").catch(() => "blocked"))).resolves.toBe("blocked");
 
     const initialProgress = await page.locator(".reading-progress").textContent();
     await page.keyboard.press("ArrowRight");
@@ -66,5 +70,6 @@ test("secure Electron window renders and paginates the real EPUB fixture", async
     await page.screenshot({ path: screenshotPath });
   } finally {
     await application.close();
+    await rm(dataRoot, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });

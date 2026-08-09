@@ -1,19 +1,30 @@
 import { session, type BrowserWindow, type WebContents } from "electron";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-export function lockDownSession(): void {
+export function isAllowedRequestUrl(url: string, rendererFile: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === "data:" || parsed.protocol === "blob:" || parsed.protocol === "devtools:") return true;
+  if (parsed.protocol !== "file:") return false;
+  try {
+    const requested = resolve(fileURLToPath(parsed)).toLowerCase();
+    const rendererRoot = dirname(resolve(rendererFile)).toLowerCase();
+    return requested === rendererRoot || requested.startsWith(`${rendererRoot}\\`);
+  } catch {
+    return false;
+  }
+}
+
+export function lockDownSession(rendererFile: string): void {
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
-    let protocol = "";
-    try {
-      protocol = new URL(details.url).protocol;
-    } catch {
-      callback({ cancel: true });
-      return;
-    }
-    const allowed = protocol === "file:" || protocol === "data:" || protocol === "blob:" || protocol === "devtools:";
-    callback({ cancel: !allowed });
+    callback({ cancel: !isAllowedRequestUrl(details.url, rendererFile) });
   });
 }
 

@@ -1,28 +1,27 @@
 # E-Reader V1
 
-Phase 0 of a quiet, local Windows EPUB/AZW3 reader with persistent offline TTS.
+A quiet, local-first Windows EPUB/AZW3 reader. Phase 1 (Library) and Phase 2 (paginated Reader) are implemented on top of the verified Phase 0 TTS pipeline.
 
-## Verified commands
+## Daily use
+
+- Start with `npm start` during development.
+- Drag one or more `.epub` / `.azw3` files onto the bookshelf, or press `Ctrl+O` and choose multiple files.
+- Double-click a cover to read. Imported books are copied into `%LOCALAPPDATA%\EReader\library`; deleting or moving the original does not affect reading.
+- Left/Right or the outer 23% page edges turn pages. `T` opens the temporary table of contents. `Esc` closes the TOC or returns to the bookshelf.
+- `+`/`-` repaginates around the current sentence. Space plays/pauses local TTS; Up/Down adjusts its speed.
+- Settings are available only from the bookshelf. The reading surface has no persistent toolbar.
+
+Only no-DRM KF8/AZW3 is supported. Protected books are rejected with `此文件受保护，无法读取。`; no decryption path is present.
+
+## Verification
 
 ```powershell
 npm install
-npm run spike:epub
-npm run fixture:azw3-protected
-npm run spike:azw3
-npm run verify
-npm run verify:phase0
-npm run test:smoke
-npm run benchmark:kokoro
-npm run benchmark:index
-npm run validate:audio
+npm run verify:phase12
 ```
 
-`npm start` builds and opens the generated EPUB fixture in fullscreen reading mode. Use Left/Right to turn pages, `+`/`-` to change font size, click a sentence to select the speech unit, Space to play/pause, Up/Down to change reading speed, and Ctrl+O to choose a local book.
+The full command performs type checking, TypeScript/Python tests, production build, EPUB/AZW3 checks, Electron E2E, real-book validation, audio validation, and the production dependency audit. Real public-domain fixtures and hashes are documented in `docs/fixtures.md`.
 
-The AZW3 spike expects the documented Project Gutenberg KF8 fixture at the version root's `data-input/pg11-images-kf8.azw3`; see `docs/fixtures.md` for source and hash. The converter is a replaceable dynamic libmobi sidecar built without encryption support.
+Kokoro remains the internal default TTS engine. IndexTTS2 is frozen as an explicit developer/research candidate and cannot block Reader startup or normal reading. Engine, model, voice, CUDA, and cache choices are not exposed in the product UI.
 
-The TTS runtime lives under `tts/.venv`. It communicates only through stdin/stdout JSON Lines and does not open a port. Runtime model access is offline by default. Kokoro is the production-route default established by the RTX 4060 benchmark; IndexTTS2 remains an explicitly enabled development candidate whose failures transparently fall back to Kokoro. Neither engine is a user-facing choice. See `docs/architecture.md`, `docs/security.md`, `docs/model-licenses.md`, `docs/third-party-components.md`, and `docs/tts-benchmark.md` for the evidence and explicit limitations.
-
-The two `:stability` benchmark scripts each run a real 30-minute synthesis stress loop. They overwrite only a hidden scratch WAV and write the final machine-readable report under the version root's `data-output` directory. A stress pass is not a substitute for the separately required human listening test.
-
-This is a Phase 0 development spike, not the final installer. A desktop shortcut is intentionally deferred until a packaged release executable exists.
+This is still a development build rather than a packaged installer. Do not create a desktop shortcut until a signed/packageable `.exe` exists.

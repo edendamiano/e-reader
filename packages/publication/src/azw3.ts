@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { OpenPublicationResult } from "../../shared/src/types";
 import { openEpub, sha256File } from "./epub";
@@ -55,7 +55,7 @@ export async function inspectAzw3Header(filePath: string): Promise<Azw3Header> {
   }
 }
 
-export async function openAzw3(filePath: string, mobitoolPath: string): Promise<OpenPublicationResult> {
+async function validateAzw3ForConversion(filePath: string, mobitoolPath: string): Promise<{ source: string; bookId: string; converter: string }> {
   if (extname(filePath).toLowerCase() !== ".azw3") {
     throw new Error("AZW3 adapter only accepts .azw3 files.");
   }
@@ -75,6 +75,11 @@ export async function openAzw3(filePath: string, mobitoolPath: string): Promise<
 
   const source = resolve(filePath);
   const originalBookId = await sha256File(source);
+  return { source, bookId: originalBookId, converter };
+}
+
+export async function normalizeAzw3ToEpub(filePath: string, mobitoolPath: string, targetPath: string): Promise<{ bookId: string; normalizedPath: string }> {
+  const { source, bookId, converter } = await validateAzw3ForConversion(filePath, mobitoolPath);
   const conversionRoot = await fs.mkdtemp(join(tmpdir(), "ereader-azw3-"));
   try {
     try {
@@ -97,10 +102,24 @@ export async function openAzw3(filePath: string, mobitoolPath: string): Promise<
     if (epubs.length !== 1 || !normalizedEntry) {
       throw new Error(`AZW3 normalization produced ${epubs.length} EPUB files for ${basename(source)}.`);
     }
-    const normalizedPath = join(conversionRoot, normalizedEntry.name);
-    const opened = await openEpub(normalizedPath);
-    opened.publication.bookId = originalBookId;
-    opened.publication.sourcePath = source;
+    const normalizedSource = join(conversionRoot, normalizedEntry.name);
+    const normalizedPath = resolve(targetPath);
+    await fs.mkdir(dirname(normalizedPath), { recursive: true });
+    await fs.copyFile(normalizedSource, normalizedPath);
+    await openEpub(normalizedPath);
+    return { bookId, normalizedPath };
+  } finally {
+    await fs.rm(conversionRoot, { recursive: true, force: true });
+  }
+}
+
+export async function openAzw3(filePath: string, mobitoolPath: string): Promise<OpenPublicationResult> {
+  const conversionRoot = await fs.mkdtemp(join(tmpdir(), "ereader-azw3-open-"));
+  try {
+    const normalized = await normalizeAzw3ToEpub(filePath, mobitoolPath, join(conversionRoot, "publication.epub"));
+    const opened = await openEpub(normalized.normalizedPath);
+    opened.publication.bookId = normalized.bookId;
+    opened.publication.sourcePath = resolve(filePath);
     return opened;
   } finally {
     await fs.rm(conversionRoot, { recursive: true, force: true });

@@ -1,6 +1,6 @@
 # ADR 0001: Readium boundary under strict Electron sandboxing
 
-Decision: accepted for Phase 0, revisit before Phase 2.
+Decision: accepted for Phase 0; superseded for the metadata parser by ADR 0003 in Phase 1/2. The stock navigator remains rejected.
 
 Use Readium's publication parser and Locator model immediately. Do not enable the stock `r2-navigator-js` publication webview in the product build yet.
 

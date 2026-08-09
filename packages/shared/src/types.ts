@@ -56,6 +56,51 @@ export interface OpenPublicationResult {
   restoredLocator?: ReadingLocator;
 }
 
+export type BookFormat = "epub" | "azw3";
+export type LibrarySort = "recent" | "title";
+
+export interface LibraryBook {
+  id: string;
+  sha256: string;
+  format: BookFormat;
+  title: string;
+  author: string;
+  sourceFilename: string;
+  addedAt: string;
+  lastOpenedAt?: string;
+  languageHint?: string;
+  progress: number;
+  coverDataUrl: string;
+}
+
+export interface ImportResult {
+  sourcePath: string;
+  status: "imported" | "duplicate" | "failed";
+  book?: LibraryBook;
+  message?: string;
+}
+
+export interface ReaderSettings {
+  fontFamily: "serif" | "sans";
+  fontSize: number;
+  lineHeight: number;
+  pageMargin: number;
+  theme: "day" | "night";
+  showProgress: boolean;
+  speechRate: number;
+}
+
+export interface StartupState {
+  books: LibraryBook[];
+  settings: ReaderSettings;
+  resume?: OpenPublicationResult;
+}
+
+export interface PublicationResourceResult {
+  href: string;
+  rawHtml: string;
+}
+
 export interface TtsHealth {
   ready: boolean;
   detail?: string;
@@ -69,8 +114,18 @@ export interface TtsSynthesisResult {
 }
 
 export interface EReaderBridge {
+  startup(): Promise<StartupState>;
+  listBooks(query: string, sort: LibrarySort): Promise<LibraryBook[]>;
+  chooseAndImport(): Promise<ImportResult[]>;
+  importDroppedFiles(files: File[]): Promise<ImportResult[]>;
+  importTestPaths(paths: string[]): Promise<ImportResult[]>;
+  openLibraryBook(bookId: string): Promise<OpenPublicationResult>;
+  deleteLibraryBook(bookId: string): Promise<void>;
+  loadPublicationResource(bookId: string, href: string): Promise<PublicationResourceResult>;
+  getSettings(): Promise<ReaderSettings>;
+  saveSettings(settings: ReaderSettings): Promise<ReaderSettings>;
+  setReadingMode(reading: boolean): Promise<void>;
   openDefaultFixture(): Promise<OpenPublicationResult>;
-  chooseBook(): Promise<OpenPublicationResult | null>;
   loadSavedLocator(bookId: string): Promise<ReadingLocator | undefined>;
   saveLocator(locator: ReadingLocator): Promise<void>;
   ttsHealth(): Promise<TtsHealth>;

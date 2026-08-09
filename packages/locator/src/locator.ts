@@ -13,6 +13,7 @@ export function createUnitLocator(
   text: string,
   progression: number,
   totalProgression?: number,
+  context?: { before?: string; after?: string },
 ): ReadingLocator {
   const clean = text.replace(/\s+/g, " ").trim();
   return {
@@ -24,7 +25,9 @@ export function createUnitLocator(
       totalProgression: totalProgression === undefined ? undefined : clampProgression(totalProgression),
     },
     text: {
+      before: context?.before?.replace(/\s+/g, " ").trim().slice(-160) || undefined,
       highlight: clean.slice(0, 240),
+      after: context?.after?.replace(/\s+/g, " ").trim().slice(0, 160) || undefined,
     },
   };
 }
@@ -34,8 +37,9 @@ export function restoreUnitIndex(units: SpeechUnit[], locator: ReadingLocator | 
     return 0;
   }
 
+  const sameResource = !units[0] || units[0].href.split("#", 1)[0] === locator.href.split("#", 1)[0];
   const selector = locator.locations.cssSelector;
-  if (selector) {
+  if (selector && sameResource) {
     const idMatch = selector.match(/data-speech-unit-id=["']([^"']+)["']/);
     const index = idMatch ? units.findIndex((unit) => unit.id === idMatch[1]) : -1;
     if (index >= 0) {
@@ -44,7 +48,7 @@ export function restoreUnitIndex(units: SpeechUnit[], locator: ReadingLocator | 
   }
 
   const quote = locator.text?.highlight?.replace(/\s+/g, " ").trim();
-  if (quote) {
+  if (quote && sameResource) {
     const exactIndex = units.findIndex((unit) => unit.text.replace(/\s+/g, " ").trim() === quote);
     if (exactIndex >= 0) {
       return exactIndex;
