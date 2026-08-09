@@ -1,0 +1,72 @@
+:root {
+  color: #292824;
+  background: #f4f0e7;
+  font-family: Georgia, "Noto Serif CJK SC", "Source Han Serif SC", SimSun, serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  user-select: none;
+}
+
+.reader-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #f4f0e7;
+}
+
+.book-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #f4f0e7;
+}
+
+.reading-progress {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  color: rgba(41, 40, 36, 0.42);
+  font: 12px/1.2 system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.reader-message {
+  position: absolute;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  padding: 7px 11px;
+  border-radius: 4px;
+  color: rgba(41, 40, 36, 0.72);
+  background: rgba(244, 240, 231, 0.92);
+  box-shadow: 0 1px 8px rgba(33, 31, 27, 0.1);
+  font: 13px/1.2 system-ui, sans-serif;
+  pointer-events: none;
+}
+
+.center-message {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  color: rgba(41, 40, 36, 0.68);
+  background: #f4f0e7;
+  font-size: 16px;
+}

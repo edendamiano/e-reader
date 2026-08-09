@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.env
+.venv/
+tts/.venv/
+tts/vendor/
+tts-cache/
+models/
+logs/*.log
+test-results/
+fixtures/generated/*.epub
+fixtures/generated/*.azw3
+native/azw3/vendor/
+native/azw3/build/
+*.pyc
+__pycache__/

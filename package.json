@@ -1,0 +1,73 @@
+{
+  "name": "e-reader",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A quiet, local-first Kindle-style EPUB/AZW3 reader with offline TTS.",
+  "main": "dist/main/index.cjs",
+  "type": "commonjs",
+  "scripts": {
+    "clean": "rimraf dist coverage",
+    "build:main": "esbuild apps/desktop/main/index.ts --bundle --platform=node --format=cjs --target=node22 --packages=external --external:electron --outfile=dist/main/index.cjs",
+    "build:preload": "esbuild apps/desktop/preload/index.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/preload/index.cjs",
+    "build:renderer": "vite build --config apps/desktop/vite.config.mts",
+    "build": "npm run clean && npm run build:main && npm run build:preload && npm run build:renderer",
+    "start": "npm run build && electron .",
+    "test": "vitest run --config vitest.config.mts",
+    "test:watch": "vitest --config vitest.config.mts",
+    "test:python": "tts\\.venv\\Scripts\\python.exe -m unittest discover -s tts/tests -v",
+    "test:smoke": "playwright test --config tests/playwright.config.ts",
+    "fixtures": "tsx scripts/generate-fixtures.ts",
+    "fixture:azw3-protected": "tsx scripts/generate-protected-azw3-fixture.ts ..\\..\\data-input\\pg11-images-kf8.azw3 fixtures\\generated\\protected-header.azw3",
+    "spike:epub": "npm run fixtures && tsx scripts/epub-spike.ts",
+    "spike:azw3": "tsx scripts/azw3-spike.ts ..\\..\\data-input\\pg11-images-kf8.azw3 fixtures\\generated\\protected-header.azw3",
+    "benchmark:kokoro": "tts\\.venv\\Scripts\\python.exe tts\\benchmark.py --engine kokoro --output ..\\..\\data-output\\tts-kokoro.json --audio-dir ..\\..\\data-output\\audio",
+    "benchmark:kokoro:stability": "tts\\.venv\\Scripts\\python.exe tts\\benchmark.py --engine kokoro --output ..\\..\\data-output\\tts-kokoro.json --audio-dir ..\\..\\data-output\\audio --stability-minutes 30",
+    "benchmark:index": "tts\\.venv\\Scripts\\python.exe tts\\benchmark.py --engine indextts2 --output ..\\..\\data-output\\tts-indextts2.json --audio-dir ..\\..\\data-output\\audio",
+    "benchmark:index:stability": "tts\\.venv\\Scripts\\python.exe tts\\benchmark.py --engine indextts2 --output ..\\..\\data-output\\tts-indextts2.json --audio-dir ..\\..\\data-output\\audio --stability-minutes 30",
+    "validate:audio": "tts\\.venv\\Scripts\\python.exe scripts\\validate-audio.py --audio-dir ..\\..\\data-output\\audio --output ..\\..\\data-output\\tts-audio-manifest.json",
+    "typecheck": "tsc -p apps/desktop/tsconfig.main.json --noEmit && tsc -p apps/desktop/tsconfig.preload.json --noEmit && tsc -p apps/desktop/tsconfig.renderer.json --noEmit",
+    "verify": "npm run typecheck && npm test && npm run test:python && npm run build",
+    "verify:phase0": "npm run verify && npm run spike:epub && npm run spike:azw3 && npm run test:smoke && npm run validate:audio"
+  },
+  "keywords": [
+    "epub",
+    "azw3",
+    "readium",
+    "electron",
+    "offline-tts"
+  ],
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22",
+    "npm": ">=11"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1",
+    "@types/mime-types": "3.0.1",
+    "@types/node": "24.13.3",
+    "@types/react": "18.3.31",
+    "@types/react-dom": "18.3.7",
+    "@types/yauzl": "3.4.0",
+    "@vitejs/plugin-react": "6.0.5",
+    "concurrently": "10.0.4",
+    "electron": "43.3.0",
+    "esbuild": "0.28.2",
+    "jsdom": "29.1.1",
+    "rimraf": "6.1.3",
+    "tsx": "4.23.11",
+    "typescript": "6.0.3",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  },
+  "dependencies": {
+    "dompurify": "3.4.13",
+    "fast-xml-parser": "5.10.1",
+    "image-size": "2.0.2",
+    "mime-types": "3.0.2",
+    "r2-shared-js": "1.0.85",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "yauzl": "3.4.0",
+    "yazl": "3.3.1"
+  }
+}

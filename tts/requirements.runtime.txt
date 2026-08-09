@@ -1,0 +1,14 @@
+# Phase 0 direct dependency pins for Windows / CPython 3.11.
+# Install PyTorch and torchaudio from the official CUDA 12.8 wheel index first.
+# Clone index-tts at commit 90ca4d608209584bad3a5bd5becc0b80c146e60f
+# into tts/vendor/index-tts before installing this file from the repository root.
+
+torch==2.8.0+cu128
+torchaudio==2.8.0+cu128
+kokoro==0.9.4
+misaki[zh]==0.9.4
+soundfile==0.14.0
+spacy==3.8.15
+setuptools==80.9.0
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+-e ./tts/vendor/index-tts
