@@ -41,7 +41,7 @@
     "azw3",
     "electron"
   ],
-  "license": "UNLICENSED",
+  "license": "MIT",
   "build": {
     "appId": "com.local.ereader",
     "productName": "E-Reader",
@@ -79,6 +79,10 @@
       {
         "from": "RELEASE_NOTES.md",
         "to": "RELEASE_NOTES.md"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
       },
       {
         "from": "packaging/assets/icon.png",

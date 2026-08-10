@@ -2,6 +2,8 @@
 
 A quiet, fully offline Windows EPUB/AZW3 reader with paginated, E-Ink-inspired rendering.
 
+Licensed under the [MIT License](LICENSE).
+
 ## Daily use
 
 - Start with `npm start` during development.
