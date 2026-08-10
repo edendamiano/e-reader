@@ -6,8 +6,9 @@ describe("publication markup isolation", () => {
   it("uses symmetric viewport-relative page geometry without CSS multiplication", () => {
     const prepared = prepareReaderDocument("<html><body><p>Balanced page margins.</p></body></html>", "a".repeat(64), "chapter.xhtml", "en");
 
-    expect(prepared.html).toContain("width: calc(100vw - var(--page-margin) - var(--page-margin))");
-    expect(prepared.html).toContain("column-gap: calc(var(--page-margin) + var(--page-margin))");
+    expect(prepared.html).toContain("--glyph-gutter: 0.32em");
+    expect(prepared.html).toContain("width: calc(100vw - var(--page-margin) - var(--page-margin) - var(--glyph-gutter) - var(--glyph-gutter))");
+    expect(prepared.html).toContain("column-gap: calc(var(--page-margin) + var(--page-margin) + var(--glyph-gutter) + var(--glyph-gutter))");
     expect(prepared.html).not.toContain("2 * var(--page-margin)");
   });
 

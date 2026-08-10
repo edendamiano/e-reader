@@ -25,6 +25,7 @@ export function readerThemeCss(): string {
       --font-size: 21px;
       --line-height: 1.72;
       --page-margin: 8vw;
+      --glyph-gutter: 0.32em;
       --paper: #f1f1ec;
       --ink: #1c1d1b;
       --muted-ink: #545550;
@@ -60,11 +61,11 @@ export function readerThemeCss(): string {
       text-shadow: none !important;
     }
     main {
-      width: calc(100vw - var(--page-margin) - var(--page-margin));
+      width: calc(100vw - var(--page-margin) - var(--page-margin) - var(--glyph-gutter) - var(--glyph-gutter));
       height: 90vh;
-      margin: 5vh var(--page-margin);
-      column-width: calc(100vw - var(--page-margin) - var(--page-margin));
-      column-gap: calc(var(--page-margin) + var(--page-margin));
+      margin: 5vh calc(var(--page-margin) + var(--glyph-gutter));
+      column-width: calc(100vw - var(--page-margin) - var(--page-margin) - var(--glyph-gutter) - var(--glyph-gutter));
+      column-gap: calc(var(--page-margin) + var(--page-margin) + var(--glyph-gutter) + var(--glyph-gutter));
       column-fill: auto;
       font-size: var(--font-size);
       line-height: var(--line-height);

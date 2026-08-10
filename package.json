@@ -1,6 +1,6 @@
 {
   "name": "e-reader",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "A quiet, local-first Kindle-style EPUB/AZW3 reader.",
   "author": "E-Reader Project",

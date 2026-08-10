@@ -65,10 +65,11 @@ test("reader keeps equal left and right margins at every supported setting", asy
       const metrics = await main.evaluate((element, value) => {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
+        const gutter = Number.parseFloat(style.fontSize) * 0.32;
         return {
           left: rect.left,
           right: innerWidth - rect.right,
-          expected: innerWidth * value / 100,
+          expected: innerWidth * value / 100 + gutter,
           width: rect.width,
           viewport: innerWidth,
           columnWidth: Number.parseFloat(style.columnWidth),
