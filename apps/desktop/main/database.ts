@@ -13,6 +13,8 @@ export interface BookRecord {
   libraryPath: string;
   normalizedPath?: string;
   coverPath: string;
+  originalCoverPath?: string;
+  coverMime?: string;
   addedAt: string;
   lastOpenedAt?: string;
   languageHint?: string;
@@ -68,16 +70,27 @@ export const MIGRATIONS: readonly Migration[] = [
       CREATE INDEX books_title_idx ON books(sort_title, title);
     `,
   },
+  {
+    version: 3,
+    name: "original-cover-assets",
+    sql: `
+      ALTER TABLE books ADD COLUMN original_cover_path TEXT;
+      ALTER TABLE books ADD COLUMN cover_mime TEXT;
+    `,
+  },
+  {
+    version: 4,
+    name: "remove-tts-state",
+    sql: `ALTER TABLE reading_state DROP COLUMN tts_locator_json;`,
+  },
 ] as const;
 
 const DEFAULT_SETTINGS: ReaderSettings = {
-  fontFamily: "serif",
   fontSize: 21,
   lineHeight: 1.72,
   pageMargin: 8,
   theme: "day",
   showProgress: true,
-  speechRate: 1,
 };
 
 function now(): string {
@@ -95,6 +108,8 @@ function rowToBook(row: Record<string, unknown>): BookRecord {
     libraryPath: String(row.library_path),
     normalizedPath: row.normalized_path ? String(row.normalized_path) : undefined,
     coverPath: String(row.cover_path),
+    originalCoverPath: row.original_cover_path ? String(row.original_cover_path) : undefined,
+    coverMime: row.cover_mime ? String(row.cover_mime) : undefined,
     addedAt: String(row.added_at),
     lastOpenedAt: row.last_opened_at ? String(row.last_opened_at) : undefined,
     languageHint: row.language_hint ? String(row.language_hint) : undefined,
@@ -105,13 +120,11 @@ function rowToBook(row: Record<string, unknown>): BookRecord {
 export function validateSettings(candidate: Partial<ReaderSettings> | undefined): ReaderSettings {
   const source = candidate ?? {};
   return {
-    fontFamily: source.fontFamily === "sans" ? "sans" : "serif",
     fontSize: typeof source.fontSize === "number" && source.fontSize >= 14 && source.fontSize <= 36 ? source.fontSize : DEFAULT_SETTINGS.fontSize,
     lineHeight: typeof source.lineHeight === "number" && source.lineHeight >= 1.3 && source.lineHeight <= 2.2 ? source.lineHeight : DEFAULT_SETTINGS.lineHeight,
     pageMargin: typeof source.pageMargin === "number" && source.pageMargin >= 4 && source.pageMargin <= 16 ? source.pageMargin : DEFAULT_SETTINGS.pageMargin,
     theme: source.theme === "night" ? "night" : "day",
     showProgress: typeof source.showProgress === "boolean" ? source.showProgress : DEFAULT_SETTINGS.showProgress,
-    speechRate: typeof source.speechRate === "number" && source.speechRate >= 0.5 && source.speechRate <= 2 ? source.speechRate : DEFAULT_SETTINGS.speechRate,
   };
 }
 
@@ -165,8 +178,9 @@ export class LibraryDatabase {
     this.database.prepare(`
       INSERT INTO books(
         id, sha256, format, title, author, source_filename, library_path,
-        normalized_path, cover_path, added_at, last_opened_at, language_hint, sort_title
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        normalized_path, cover_path, original_cover_path, cover_mime,
+        added_at, last_opened_at, language_hint, sort_title
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       book.id,
       book.sha256,
@@ -177,6 +191,8 @@ export class LibraryDatabase {
       book.libraryPath,
       book.normalizedPath ?? null,
       book.coverPath,
+      book.originalCoverPath ?? null,
+      book.coverMime ?? null,
       book.addedAt,
       book.lastOpenedAt ?? null,
       book.languageHint ?? null,
@@ -223,17 +239,16 @@ export class LibraryDatabase {
     this.database.prepare("UPDATE books SET last_opened_at = ? WHERE id = ?").run(openedAt, bookId);
   }
 
-  public saveReadingState(locator: ReadingLocator, ttsLocator?: ReadingLocator): void {
+  public saveReadingState(locator: ReadingLocator): void {
     const total = Math.max(0, Math.min(1, locator.locations.totalProgression ?? locator.locations.progression ?? 0));
     this.database.prepare(`
-      INSERT INTO reading_state(book_id, locator_json, total_progression, tts_locator_json, updated_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO reading_state(book_id, locator_json, total_progression, updated_at)
+      VALUES (?, ?, ?, ?)
       ON CONFLICT(book_id) DO UPDATE SET
         locator_json = excluded.locator_json,
         total_progression = excluded.total_progression,
-        tts_locator_json = excluded.tts_locator_json,
         updated_at = excluded.updated_at
-    `).run(locator.bookId, JSON.stringify(locator), total, ttsLocator ? JSON.stringify(ttsLocator) : null, now());
+    `).run(locator.bookId, JSON.stringify(locator), total, now());
   }
 
   public loadReadingState(bookId: string): ReadingLocator | undefined {

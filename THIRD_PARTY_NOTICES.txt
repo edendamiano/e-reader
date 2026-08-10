@@ -1,0 +1,47 @@
+E-Reader 1.0.0 - Third-Party Notices
+=====================================
+
+This application is an unsigned local development distribution. It bundles
+open-source software and font assets. Copyright remains with each upstream
+author. The entries below identify the principal redistributed components;
+the npm lock file and docs/third-party-components.md in the source distribution.
+
+Lora variable font
+  Source: https://github.com/google/fonts/tree/main/ofl/lora
+  License: SIL Open Font License 1.1
+  License file: apps/desktop/renderer/src/assets/fonts/OFL-Lora.txt
+
+Noto Serif SC variable font
+  Source: https://github.com/google/fonts/tree/main/ofl/notoserifsc
+  License: SIL Open Font License 1.1
+  License file: apps/desktop/renderer/src/assets/fonts/OFL-NotoSerifSC.txt
+
+Electron 43.3.0
+  Source: https://github.com/electron/electron
+  License: MIT; bundled Chromium and Node.js contain additional third-party notices.
+  Electron's generated LICENSES.chromium.html and LICENSE files are included in
+  the installed application directory.
+
+React / React DOM 18.3.1
+  Source: https://github.com/facebook/react
+  License: MIT
+
+DOMPurify 3.4.13
+  Source: https://github.com/cure53/DOMPurify
+  License: Apache License 2.0 or Mozilla Public License 2.0
+
+libmobi / mobitool
+  Source: https://github.com/bfabiszewski/libmobi
+  License: GNU Lesser General Public License 3.0
+  A copy is installed at resources/native/azw3/LICENSE.libmobi-LGPL-3.0.txt.
+
+zlib 1.3.1
+  Source: https://zlib.net/
+  License: zlib License
+  A copy is installed at resources/native/azw3/LICENSE.zlib-1.3.1.txt.
+
+Application icon
+  Original asset generated for this project from the prompt documented in
+  docs/icon-source.md. No third-party trademark or typeface is embedded.
+
+No TTS model, Python runtime, CUDA library, or speech cache is part of E-Reader.

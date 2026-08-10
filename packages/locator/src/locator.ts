@@ -1,4 +1,4 @@
-import type { ReadingLocator, SpeechUnit } from "../../shared/src/types";
+import type { ReadingLocator, ReadingUnit } from "../../shared/src/types";
 
 export function clampProgression(value: number | undefined): number {
   if (!Number.isFinite(value)) {
@@ -20,7 +20,7 @@ export function createUnitLocator(
     bookId,
     href,
     locations: {
-      cssSelector: `[data-speech-unit-id="${unitId}"]`,
+      cssSelector: `[data-reading-unit-id="${unitId}"]`,
       progression: clampProgression(progression),
       totalProgression: totalProgression === undefined ? undefined : clampProgression(totalProgression),
     },
@@ -32,7 +32,7 @@ export function createUnitLocator(
   };
 }
 
-export function restoreUnitIndex(units: SpeechUnit[], locator: ReadingLocator | undefined): number {
+export function restoreUnitIndex(units: ReadingUnit[], locator: ReadingLocator | undefined): number {
   if (!locator || units.length === 0) {
     return 0;
   }
@@ -40,7 +40,7 @@ export function restoreUnitIndex(units: SpeechUnit[], locator: ReadingLocator | 
   const sameResource = !units[0] || units[0].href.split("#", 1)[0] === locator.href.split("#", 1)[0];
   const selector = locator.locations.cssSelector;
   if (selector && sameResource) {
-    const idMatch = selector.match(/data-speech-unit-id=["']([^"']+)["']/);
+    const idMatch = selector.match(/data-reading-unit-id=["']([^"']+)["']/);
     const index = idMatch ? units.findIndex((unit) => unit.id === idMatch[1]) : -1;
     if (index >= 0) {
       return index;

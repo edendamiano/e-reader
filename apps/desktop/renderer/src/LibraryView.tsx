@@ -1,4 +1,4 @@
-import { useState, type DragEvent } from "react";
+import { useEffect, useState, type DragEvent } from "react";
 import type { LibraryBook, LibrarySort } from "../../../../packages/shared/src/types";
 
 interface LibraryViewProps {
@@ -19,6 +19,17 @@ export function LibraryView(props: LibraryViewProps) {
   const [details, setDetails] = useState<LibraryBook>();
   const [deletePending, setDeletePending] = useState(false);
   const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    if (!details) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (deletePending) setDeletePending(false);
+      else setDetails(undefined);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [details, deletePending]);
 
   const drop = async (event: DragEvent) => {
     event.preventDefault();
@@ -53,7 +64,8 @@ export function LibraryView(props: LibraryViewProps) {
       {props.notice && <div className="library-notice" role="status">{props.notice}</div>}
       {props.books.length === 0 ? (
         <section className="empty-library">
-          <p>{props.query ? "没有匹配的书。" : "把 EPUB 或 AZW3 拖到这里。"}</p>
+          <p>{props.query ? "没有匹配的书。" : "将 EPUB 或 AZW3 拖到这里"}</p>
+          {!props.query && <span className="muted">或按 Ctrl+O</span>}
           {!props.query && <button type="button" onClick={props.onImport}>选择书籍</button>}
         </section>
       ) : (

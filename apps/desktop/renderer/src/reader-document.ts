@@ -1,14 +1,15 @@
 import DOMPurify from "dompurify";
-import { buildSpeechUnits, segmentSentences, type TextBlock } from "../../../../packages/reader-core/src/speech-units";
-import type { SpeechUnit, SpeechUnitType } from "../../../../packages/shared/src/types";
+import { buildReadingUnits, segmentSentences, type TextBlock } from "../../../../packages/reader-core/src/reading-units";
+import type { ReadingUnit, ReadingUnitType } from "../../../../packages/shared/src/types";
+import { readerThemeCss } from "./reader-theme";
 
 export interface PreparedReaderDocument {
   html: string;
-  units: SpeechUnit[];
+  units: ReadingUnit[];
 }
 const BLOCK_SELECTOR = "h1,h2,h3,h4,h5,h6,p,blockquote,li";
 
-function blockType(element: Element): SpeechUnitType {
+function blockType(element: Element): ReadingUnitType {
   const tag = element.tagName.toLowerCase();
   if (tag.startsWith("h")) return "heading";
   if (tag === "blockquote") return "quote";
@@ -52,7 +53,7 @@ export function prepareReaderDocument(
     selector: `${element.tagName.toLowerCase()}:nth-reader-block(${index + 1})`,
     type: blockType(element),
   }));
-  const units = buildSpeechUnits(bookId, href, blocks, locale);
+  const units = buildReadingUnits(bookId, href, blocks, locale);
 
   let unitIndex = 0;
   for (const element of elements) {
@@ -62,27 +63,17 @@ export function prepareReaderDocument(
       const unit = units[unitIndex++];
       if (!unit) continue;
       const span = parsed.createElement("span");
-      span.className = "speech-unit";
-      span.dataset.speechUnitId = unit.id;
+      span.className = "reading-unit";
+      span.dataset.readingUnitId = unit.id;
       span.textContent = sentence;
       element.append(span, parsed.createTextNode(" "));
     }
   }
 
   const safeLocale = escapeStyleValue(locale || "und");
-  const contentSecurityPolicy = "default-src 'none'; img-src data:; media-src data:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; font-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'";
+  const contentSecurityPolicy = "default-src 'none'; img-src data:; media-src 'none'; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; font-src file:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'";
   const html = `<!doctype html><html lang="${safeLocale}"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${contentSecurityPolicy}"><style>
-    :root { --font-size: 21px; --line-height: 1.72; --page-margin: 8vw; --paper: #f4f0e7; --ink: #292824; }
-    * { box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: var(--paper); color: var(--ink); }
-    body { font-family: Georgia, "Noto Serif CJK SC", "Source Han Serif SC", SimSun, serif; }
-    main { height: calc(100vh - 10vh); margin: 5vh var(--page-margin); column-width: calc(100vw - (2 * var(--page-margin))); column-gap: calc(2 * var(--page-margin)); column-fill: auto; font-size: var(--font-size); line-height: var(--line-height); text-align: justify; overflow: visible; }
-    h1, h2, h3 { break-after: avoid; line-height: 1.3; text-align: start; }
-    p { margin: 0 0 1.05em; orphans: 2; widows: 2; }
-    img { display: block; max-width: 100%; max-height: 76vh; margin: 1em auto; object-fit: contain; break-inside: avoid; }
-    .speech-unit { border-radius: 0.15em; transition: background-color 80ms linear; }
-    .speech-unit.is-active { background: rgba(108, 96, 77, 0.14); }
-    ::selection { background: rgba(111, 129, 148, 0.23); }
+    ${readerThemeCss()}
   </style></head><body><main id="book-content">${parsed.body.innerHTML}</main></body></html>`;
   return { html, units };
 }

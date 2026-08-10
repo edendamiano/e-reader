@@ -1,8 +1,9 @@
 {
   "name": "e-reader",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "A quiet, local-first Kindle-style EPUB/AZW3 reader with offline TTS.",
+  "description": "A quiet, local-first Kindle-style EPUB/AZW3 reader.",
+  "author": "E-Reader Project",
   "main": "dist/main/index.cjs",
   "type": "commonjs",
   "scripts": {
@@ -11,34 +12,102 @@
     "build:preload": "esbuild apps/desktop/preload/index.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=dist/preload/index.cjs",
     "build:renderer": "vite build --config apps/desktop/vite.config.mts",
     "build": "npm run clean && npm run build:main && npm run build:preload && npm run build:renderer",
+    "package:dir": "npm run build && electron-builder --dir --win --x64",
+    "package:win": "npm run build && electron-builder --win nsis --x64",
+    "package:v1": "powershell -ExecutionPolicy Bypass -File .\\packaging\\build-release.ps1",
     "start": "npm run build && electron .",
     "test": "vitest run --config vitest.config.mts",
     "test:watch": "vitest --config vitest.config.mts",
-    "test:python": "tts\\.venv\\Scripts\\python.exe -m unittest discover -s tts/tests -v",
     "test:smoke": "npm run fixtures && playwright test --config tests/playwright.config.ts",
+    "test:packaged": "npm run fixtures && playwright test --config tests/playwright.packaged.config.ts",
+    "test:upgrade": "playwright test --config tests/playwright.upgrade.config.ts",
+    "test:dpi": "playwright test --config tests/playwright.dpi.config.ts",
+    "test:margin": "playwright test --config tests/playwright.margin.config.ts",
+    "test:fullscreen": "playwright test --config tests/playwright.fullscreen.config.ts",
+    "test:eink": "npm run fixtures && playwright test --config tests/playwright.eink.config.ts",
     "fixtures": "tsx scripts/generate-fixtures.ts",
     "fixture:azw3-protected": "tsx scripts/generate-protected-azw3-fixture.ts ..\\..\\data-input\\pg11-images-kf8.azw3 fixtures\\generated\\protected-header.azw3",
     "spike:epub": "npm run fixtures && tsx scripts/epub-spike.ts",
     "spike:azw3": "npm run fixture:azw3-protected && tsx scripts/azw3-spike.ts ..\\..\\data-input\\pg11-images-kf8.azw3 fixtures\\generated\\protected-header.azw3",
-    "benchmark:kokoro": "tts\\.venv\\Scripts\\python.exe tts\\benchmark.py --engine kokoro --output ..\\..\\data-output\\tts-kokoro.json --audio-dir ..\\..\\data-output\\audio",
-    "benchmark:kokoro:stability": "tts\\.venv\\Scripts\\python.exe tts\\benchmark.py --engine kokoro --output ..\\..\\data-output\\tts-kokoro.json --audio-dir ..\\..\\data-output\\audio --stability-minutes 30",
-    "benchmark:index": "tts\\.venv\\Scripts\\python.exe tts\\benchmark.py --engine indextts2 --output ..\\..\\data-output\\tts-indextts2.json --audio-dir ..\\..\\data-output\\audio",
-    "benchmark:index:stability": "tts\\.venv\\Scripts\\python.exe tts\\benchmark.py --engine indextts2 --output ..\\..\\data-output\\tts-indextts2.json --audio-dir ..\\..\\data-output\\audio --stability-minutes 30",
-    "validate:audio": "tts\\.venv\\Scripts\\python.exe scripts\\validate-audio.py --audio-dir ..\\..\\data-output\\audio --output ..\\..\\data-output\\tts-audio-manifest.json",
     "validate:real-books": "tsx scripts/validate-real-books.ts",
     "audit:prod": "npm audit --omit=dev",
     "typecheck": "tsc -p apps/desktop/tsconfig.main.json --noEmit && tsc -p apps/desktop/tsconfig.preload.json --noEmit && tsc -p apps/desktop/tsconfig.renderer.json --noEmit",
-    "verify": "npm run typecheck && npm test && npm run test:python && npm run build",
-    "verify:phase0": "npm run verify && npm run spike:epub && npm run spike:azw3 && npm run test:smoke && npm run validate:audio",
-    "verify:phase12": "npm run verify && npm run spike:epub && npm run spike:azw3 && npm run test:smoke && npm run validate:real-books && npm run validate:audio && npm run audit:prod"
+    "verify": "npm run typecheck && npm test && npm run build",
+    "verify:phase0": "npm run verify && npm run spike:epub && npm run spike:azw3 && npm run test:smoke",
+    "verify:phase12": "npm run verify && npm run spike:epub && npm run spike:azw3 && npm run test:smoke && npm run validate:real-books && npm run audit:prod"
   },
   "keywords": [
     "epub",
     "azw3",
-    "electron",
-    "offline-tts"
+    "electron"
   ],
   "license": "UNLICENSED",
+  "build": {
+    "appId": "com.local.ereader",
+    "productName": "E-Reader",
+    "asar": true,
+    "directories": {
+      "output": "release",
+      "buildResources": "packaging/assets"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "native/azw3/bin",
+        "to": "native/azw3/bin"
+      },
+      {
+        "from": "native/azw3/LICENSE.libmobi-LGPL-3.0.txt",
+        "to": "native/azw3/LICENSE.libmobi-LGPL-3.0.txt"
+      },
+      {
+        "from": "native/azw3/LICENSE.zlib-1.3.1.txt",
+        "to": "native/azw3/LICENSE.zlib-1.3.1.txt"
+      },
+      {
+        "from": "native/azw3/README.md",
+        "to": "native/azw3/README.md"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.txt",
+        "to": "THIRD_PARTY_NOTICES.txt"
+      },
+      {
+        "from": "RELEASE_NOTES.md",
+        "to": "RELEASE_NOTES.md"
+      },
+      {
+        "from": "packaging/assets/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "win": {
+      "icon": "packaging/assets/icon.ico",
+      "executableName": "E-Reader",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "E-Reader-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "E-Reader",
+      "uninstallDisplayName": "E-Reader ${version}",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": false
+    }
+  },
   "engines": {
     "node": ">=22",
     "npm": ">=11"
@@ -54,6 +123,7 @@
     "@vitejs/plugin-react": "6.0.5",
     "concurrently": "10.0.4",
     "electron": "43.3.0",
+    "electron-builder": "26.15.3",
     "esbuild": "0.28.2",
     "jsdom": "29.1.1",
     "rimraf": "6.1.3",

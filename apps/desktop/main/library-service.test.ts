@@ -8,6 +8,8 @@ import type { LibraryPaths } from "./library-service";
 import { LibraryService } from "./library-service";
 
 const FIXTURE_TIME = new Date("2020-01-01T00:00:00Z");
+const TEST_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAD91JpzAAAAFElEQVR4nGP8z8DAwMDAxMDAwMAAAAwAAf8CBWkAAAAASUVORK5CYII=", "base64");
+type CoverMode = "none" | "epub2" | "epub3";
 let root = "";
 let paths: LibraryPaths;
 let service: LibraryService;
@@ -16,17 +18,20 @@ function addText(zip: ZipFile, name: string, text: string, compress = true): voi
   zip.addBuffer(Buffer.from(text, "utf8"), name, { compress, mtime: FIXTURE_TIME, mode: 0o100644 });
 }
 
-async function writeEpub(outputPath: string, title: string, author = "Fixture Author"): Promise<void> {
+async function writeEpub(outputPath: string, title: string, author = "Fixture Author", coverMode: CoverMode = "none"): Promise<void> {
   await fs.mkdir(dirname(outputPath), { recursive: true });
   const zip = new ZipFile();
   const output = createWriteStream(outputPath);
   zip.outputStream.pipe(output);
   addText(zip, "mimetype", "application/epub+zip", false);
   addText(zip, "META-INF/container.xml", `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/package.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`);
-  addText(zip, "OEBPS/package.opf", `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">fixture-${title}</dc:identifier><dc:title>${title}</dc:title><dc:creator>${author}</dc:creator><dc:language>en</dc:language><meta property="dcterms:modified">2020-01-01T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>`);
+  const coverMeta = coverMode === "epub2" ? `<meta name="cover" content="cover-art"/>` : "";
+  const coverItem = coverMode === "none" ? "" : `<item id="cover-art" href="images/art.png" media-type="image/png"${coverMode === "epub3" ? ` properties="cover-image"` : ""}/>`;
+  addText(zip, "OEBPS/package.opf", `<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" unique-identifier="uid" version="${coverMode === "epub2" ? "2.0" : "3.0"}"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">fixture-${title}</dc:identifier><dc:title>${title}</dc:title><dc:creator>${author}</dc:creator><dc:language>en</dc:language>${coverMeta}<meta property="dcterms:modified">2020-01-01T00:00:00Z</meta></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/>${coverItem}</manifest><spine><itemref idref="one"/><itemref idref="two"/></spine></package>`);
   addText(zip, "OEBPS/nav.xhtml", `<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol><li><a href="one.xhtml">Part One</a><ol><li><a href="two.xhtml">Part Two</a></li></ol></li></ol></nav></body></html>`);
   addText(zip, "OEBPS/one.xhtml", `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>${title}</h1><p>A durable library-owned sentence.</p></body></html>`);
   addText(zip, "OEBPS/two.xhtml", `<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>Second chapter</h1><p>Spine navigation remains available after the source disappears.</p></body></html>`);
+  if (coverMode !== "none") zip.addBuffer(TEST_PNG, "OEBPS/images/art.png", { mtime: FIXTURE_TIME, mode: 0o100644 });
   zip.end();
   await finished(output);
 }
@@ -37,11 +42,9 @@ beforeEach(async () => {
     root,
     library: join(root, "library"),
     database: join(root, "database", "reader.sqlite3"),
-    ttsCache: join(root, "tts-cache"),
-    models: join(root, "models"),
     logs: join(root, "logs"),
   };
-  service = new LibraryService(paths, resolve(__dirname, "../../.."));
+  service = new LibraryService(paths, resolve(__dirname, "../../.."), () => undefined, async (_source, target) => fs.writeFile(target, TEST_PNG));
   await service.initialize();
 });
 
@@ -104,6 +107,18 @@ describe("LibraryService import ownership", () => {
     expect(result?.book?.coverDataUrl).toMatch(/^data:image\/svg\+xml/);
   });
 
+  it.each(["epub2", "epub3"] as const)("extracts an original %s cover and stores a separate cached thumbnail", async (coverMode) => {
+    const source = join(root, "incoming", `${coverMode}.epub`);
+    await writeEpub(source, `${coverMode} Cover`, "Cover Author", coverMode);
+    const [result] = await service.importPaths([source]);
+    expect(result?.status).toBe("imported");
+    expect(result?.book?.coverDataUrl).toMatch(/^data:image\/png;base64,/);
+    const files = await fs.readdir(join(paths.library, result!.book!.id));
+    expect(files).toContain("cover-original.png");
+    expect(files).toContain("cover-thumbnail.png");
+    expect(await fs.readFile(join(paths.library, result!.book!.id, "cover-original.png"))).toEqual(TEST_PNG);
+  });
+
   const realAzw3 = resolve(__dirname, "../../../../..", "data-input", "pg11-images-kf8.azw3");
   it.skipIf(!existsSync(realAzw3))("persists a real no-DRM KF8 normalization and rejects a protected header", async () => {
     const incoming = join(root, "incoming");
@@ -116,6 +131,8 @@ describe("LibraryService import ownership", () => {
     const opened = await service.openBook(imported!.book!.id);
     expect(opened.publication.title).toContain("Alice");
     expect(opened.publication.readingOrder).toHaveLength(19);
+    expect(imported?.book?.coverDataUrl).toMatch(/^data:image\/(?:png|jpeg|gif|webp);base64,/);
+    expect((await fs.readdir(join(paths.library, imported!.book!.id))).some((name) => name.startsWith("cover-original."))).toBe(true);
 
     const protectedPath = join(incoming, "protected.azw3");
     const protectedBytes = await fs.readFile(realAzw3);

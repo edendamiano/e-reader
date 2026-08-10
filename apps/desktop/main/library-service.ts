@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { constants, promises as fs } from "node:fs";
 import { basename, extname, join, parse, resolve } from "node:path";
-import { cleanZipHref, openEpub, readEpubResource, sha256File } from "../../../packages/publication/src/epub";
+import { cleanZipHref, openEpub, readEpubCover, readEpubResource, sha256File } from "../../../packages/publication/src/epub";
 import { normalizeAzw3ToEpub, ProtectedPublicationError } from "../../../packages/publication/src/azw3";
 import type {
   ImportResult,
@@ -21,8 +21,6 @@ export interface LibraryPaths {
   root: string;
   library: string;
   database: string;
-  ttsCache: string;
-  models: string;
   logs: string;
 }
 
@@ -30,6 +28,12 @@ interface CachedPublication {
   path: string;
   publication: PublicationDto;
 }
+
+export type CoverThumbnailer = (sourcePath: string, targetPath: string) => Promise<void>;
+
+const COVER_EXTENSION = new Map<string, string>([
+  ["image/png", ".png"], ["image/jpeg", ".jpg"], ["image/gif", ".gif"], ["image/webp", ".webp"],
+]);
 
 function xmlEscape(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
@@ -66,6 +70,7 @@ export class LibraryService {
     private readonly paths: LibraryPaths,
     private readonly repoRoot: string,
     private readonly logger: (line: string) => void = () => undefined,
+    private readonly thumbnailer?: CoverThumbnailer,
   ) {
     this.database = new LibraryDatabase(paths.database);
   }
@@ -73,8 +78,6 @@ export class LibraryService {
   public async initialize(): Promise<void> {
     await Promise.all([
       fs.mkdir(this.paths.library, { recursive: true }),
-      fs.mkdir(this.paths.ttsCache, { recursive: true }),
-      fs.mkdir(this.paths.models, { recursive: true }),
       fs.mkdir(this.paths.logs, { recursive: true }),
     ]);
     const entries = await fs.readdir(this.paths.library, { withFileTypes: true });
@@ -93,7 +96,8 @@ export class LibraryService {
   private async coverDataUrl(path: string): Promise<string> {
     try {
       const bytes = await fs.readFile(path);
-      return `data:image/svg+xml;base64,${bytes.toString("base64")}`;
+      const mime = new Map([[".svg", "image/svg+xml"], [".png", "image/png"], [".jpg", "image/jpeg"], [".jpeg", "image/jpeg"], [".gif", "image/gif"], [".webp", "image/webp"]]).get(extname(path).toLowerCase()) ?? "application/octet-stream";
+      return `data:${mime};base64,${bytes.toString("base64")}`;
     } catch {
       return "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='720'%3E%3Crect width='100%25' height='100%25' fill='%23ded7c8'/%3E%3C/svg%3E";
     }
@@ -172,8 +176,34 @@ export class LibraryService {
       const opened = await openEpub(publicationPath);
       const title = safeTitle(opened, sourcePath);
       const author = safeAuthor(opened);
-      const coverPath = join(staging, "cover.svg");
-      await this.writePlaceholderCover(coverPath, title, author);
+      let coverPath = join(staging, "cover.svg");
+      let originalCoverPath: string | undefined;
+      let coverMime: string | undefined;
+      if (opened.publication.cover) {
+        try {
+          const bytes = await readEpubCover(publicationPath, opened.publication.cover);
+          const originalExtension = COVER_EXTENSION.get(opened.publication.cover.type);
+          if (originalExtension) {
+            originalCoverPath = join(staging, `cover-original${originalExtension}`);
+            await fs.writeFile(originalCoverPath, bytes);
+            coverMime = opened.publication.cover.type;
+            if (this.thumbnailer) {
+              const thumbnailPath = join(staging, "cover-thumbnail.png");
+              await this.thumbnailer(originalCoverPath, thumbnailPath);
+              coverPath = thumbnailPath;
+            } else {
+              const thumbnailPath = join(staging, `cover-thumbnail${originalExtension}`);
+              await fs.copyFile(originalCoverPath, thumbnailPath);
+              coverPath = thumbnailPath;
+            }
+          }
+        } catch (error) {
+          this.logger(`[library:cover-failed] bookId=${sha256} error=${error instanceof Error ? error.message : String(error)}`);
+          originalCoverPath = undefined;
+          coverMime = undefined;
+        }
+      }
+      if (coverPath.endsWith("cover.svg")) await this.writePlaceholderCover(coverPath, title, author);
 
       finalRoot = join(this.paths.library, sha256);
       if (await fs.stat(finalRoot).then(() => true).catch(() => false)) {
@@ -190,7 +220,9 @@ export class LibraryService {
         sourceFilename: basename(sourcePath),
         libraryPath: join(finalRoot, sourceName),
         normalizedPath: stagedNormalized ? join(finalRoot, "publication.epub") : undefined,
-        coverPath: join(finalRoot, "cover.svg"),
+        coverPath: join(finalRoot, basename(coverPath)),
+        originalCoverPath: originalCoverPath ? join(finalRoot, basename(originalCoverPath)) : undefined,
+        coverMime,
         addedAt,
         languageHint: opened.publication.languages[0],
       };
@@ -273,11 +305,6 @@ export class LibraryService {
     }
   }
 
-  private async removeBookTtsCache(bookId: string): Promise<void> {
-    const engines = await fs.readdir(this.paths.ttsCache, { withFileTypes: true }).catch(() => []);
-    await Promise.all(engines.filter((entry) => entry.isDirectory()).map((entry) => fs.rm(join(this.paths.ttsCache, entry.name, bookId), { recursive: true, force: true })));
-  }
-
   public async deleteBook(bookId: string): Promise<void> {
     if (!BOOK_ID_PATTERN.test(bookId)) throw new Error("Invalid book id.");
     const record = this.database.getBook(bookId);
@@ -292,10 +319,7 @@ export class LibraryService {
       throw error;
     }
     this.publicationCache.delete(bookId);
-    await Promise.all([
-      fs.rm(trash, { recursive: true, force: true }),
-      this.removeBookTtsCache(bookId),
-    ]);
+    await fs.rm(trash, { recursive: true, force: true });
   }
 
   public getSettings(): ReaderSettings {

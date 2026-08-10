@@ -28,9 +28,15 @@ export function lockDownSession(rendererFile: string): void {
   });
 }
 
-export function hardenWindow(window: BrowserWindow, rendererFile: string): void {
+export function hardenWindow(window: BrowserWindow, rendererFile: string, production = false): void {
   const expected = new URL(`file:///${resolve(rendererFile).replace(/\\/g, "/")}`).href;
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  if (production) {
+    window.webContents.on("before-input-event", (event, input) => {
+      const devToolsShortcut = input.key === "F12" || (input.control && input.shift && input.key.toLowerCase() === "i");
+      if (devToolsShortcut) event.preventDefault();
+    });
+  }
   window.webContents.on("will-navigate", (event, url) => {
     if (url !== expected) {
       event.preventDefault();

@@ -3,7 +3,7 @@ import { createReadStream, promises as fs } from "node:fs";
 import { extname, posix } from "node:path";
 import { XMLParser } from "fast-xml-parser";
 import yauzl, { type Entry } from "yauzl";
-import type { OpenPublicationResult, PublicationDto, PublicationLinkDto } from "../../shared/src/types";
+import type { OpenPublicationResult, PublicationCoverDto, PublicationDto, PublicationLinkDto } from "../../shared/src/types";
 
 const MAX_EPUB_BYTES = 1_000_000_000;
 const MAX_DOCUMENT_BYTES = 16_000_000;
@@ -190,6 +190,29 @@ const IMAGE_MIME = new Map<string, string>([
   [".gif", "image/gif"],
   [".webp", "image/webp"],
 ]);
+const COVER_MIME = new Set<PublicationCoverDto["type"]>(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+
+function coverMime(value: unknown): PublicationCoverDto["type"] | undefined {
+  const normalized = String(value ?? "").toLowerCase().replace("image/jpg", "image/jpeg");
+  return COVER_MIME.has(normalized as PublicationCoverDto["type"])
+    ? normalized as PublicationCoverDto["type"]
+    : undefined;
+}
+
+function sniffImageMime(bytes: Buffer): PublicationCoverDto["type"] | undefined {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.toString("ascii", 0, 6))) return "image/gif";
+  if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  return undefined;
+}
+
+export async function readEpubCover(filePath: string, cover: PublicationCoverDto): Promise<Buffer> {
+  const bytes = await readZipBuffer(filePath, cover.href, MAX_IMAGE_BYTES);
+  const actual = sniffImageMime(bytes);
+  if (!actual || actual !== cover.type) throw new Error("EPUB cover bytes do not match a supported raster image type.");
+  return bytes;
+}
 
 function resolvePublicationAsset(documentHref: string, source: string): string | undefined {
   const withoutFragment = source.split("#", 1)[0]?.split("?", 1)[0]?.trim() ?? "";
@@ -369,6 +392,43 @@ async function parsePublication(filePath: string, bookId: string): Promise<Publi
     const ncxPath = publicationHref(opfPath, ncxItem.href);
     if (ncxPath) toc = await parseNcx(filePath, cleanZipHref(ncxPath));
   }
+  const toCover = (item: Record<string, unknown> | undefined): PublicationCoverDto | undefined => {
+    const type = coverMime(item?.["media-type"]);
+    const href = item && typeof item.href === "string" ? publicationHref(opfPath, item.href) : undefined;
+    return type && href ? { href: cleanZipHref(href), type } : undefined;
+  };
+  const epub3Cover = manifest.find((item) => String(item.properties ?? "").split(/\s+/).includes("cover-image"));
+  const epub2CoverId = asArray(metadata.meta).map(record)
+    .find((item) => String(item.name ?? "").toLowerCase() === "cover" && typeof item.content === "string")?.content;
+  const epub2Cover = typeof epub2CoverId === "string" ? manifestById.get(epub2CoverId) : undefined;
+  const guideReference = asArray(record(packageDocument.guide).reference).map(record)
+    .find((item) => String(item.type ?? "").toLowerCase().split(/\s+/).includes("cover"));
+  let guideCover: PublicationCoverDto | undefined;
+  if (guideReference && typeof guideReference.href === "string") {
+    const guideHref = publicationHref(opfPath, guideReference.href);
+    const direct = guideHref ? manifest.find((item) => {
+      const href = typeof item.href === "string" ? publicationHref(opfPath, item.href) : undefined;
+      return href && cleanZipHref(href) === cleanZipHref(guideHref);
+    }) : undefined;
+    guideCover = toCover(direct);
+    if (!guideCover && guideHref) {
+      try {
+        const guidePath = cleanZipHref(guideHref);
+        const html = await readZipText(filePath, guidePath);
+        const source = /<img\b[^>]*\bsrc\s*=\s*(["'])(.*?)\1/i.exec(html)?.[2];
+        const asset = source ? resolvePublicationAsset(guidePath, source) : undefined;
+        const type = asset ? coverMime(IMAGE_MIME.get(extname(asset).toLowerCase())) : undefined;
+        if (asset && type) guideCover = { href: asset, type };
+      } catch {
+        // A broken guide cover must never prevent the publication from opening.
+      }
+    }
+  }
+  const fallbackCover = manifest.find((item) => {
+    if (!coverMime(item["media-type"])) return false;
+    return /(?:^|[-_.\/])cover(?:[-_.\/]|$)/i.test(`${String(item.id ?? "")} ${String(item.href ?? "")}`);
+  });
+  const cover = toCover(epub3Cover) ?? toCover(epub2Cover) ?? guideCover ?? toCover(fallbackCover);
   return {
     bookId,
     sourcePath: filePath,
@@ -377,6 +437,7 @@ async function parsePublication(filePath: string, bookId: string): Promise<Publi
     languages: asArray(metadata.language).map(textValue).filter(Boolean),
     readingOrder,
     toc,
+    cover,
   };
 }
 

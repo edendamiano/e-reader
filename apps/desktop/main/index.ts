@@ -1,44 +1,46 @@
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen } from "electron";
 import { join, resolve } from "node:path";
 import { openPublication } from "../../../packages/publication/src";
 import type { LibrarySort, ReaderSettings, ReadingLocator } from "../../../packages/shared/src/types";
 import { LibraryService, type LibraryPaths } from "./library-service";
 import { hardenWindow, lockDownSession, senderIsTrusted } from "./security";
 import { ReadingStateStore } from "./state-store";
-import { TtsSidecar } from "./tts-sidecar";
+import { resolveLibraryPaths, resolveRuntimeRoot } from "./runtime-paths";
+import { RotatingLogger } from "./rotating-logger";
 
-app.setName("EReader");
+app.setName("E-Reader");
+app.setAppUserModelId("com.local.ereader");
+const enforceSingleInstance = app.isPackaged && (!process.env.EREADER_DATA_ROOT || process.env.EREADER_ENFORCE_SINGLE_INSTANCE === "1");
+const instanceLockAcquired = !enforceSingleInstance || app.requestSingleInstanceLock();
+if (!instanceLockAcquired) app.quit();
 const repoRoot = resolve(__dirname, "../..");
+const runtimeRoot = resolveRuntimeRoot(app.isPackaged, process.resourcesPath, repoRoot);
+if (app.isPackaged) process.env.EREADER_PACKAGED = "1";
 const rendererFile = resolve(__dirname, "../renderer/index.html");
 const smokeTest = process.argv.includes("--smoke-test");
+const defaultFullscreen = process.env.EREADER_DEFAULT_FULLSCREEN === "1" || (!smokeTest && !process.env.EREADER_DATA_ROOT);
 let mainWindow: BrowserWindow | undefined;
 let legacyStateStore: ReadingStateStore;
 let library: LibraryService;
-let tts: TtsSidecar;
 let paths: LibraryPaths;
+let logger: RotatingLogger | undefined;
+
+if (instanceLockAcquired) {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+  });
+}
 
 function dataPaths(): LibraryPaths {
-  const configured = process.env.EREADER_DATA_ROOT;
-  const localRoot = configured
-    ? resolve(configured)
-    : process.env.LOCALAPPDATA
-      ? join(process.env.LOCALAPPDATA, "EReader")
-      : app.getPath("userData");
-  return {
-    root: localRoot,
-    library: join(localRoot, "library"),
-    database: join(localRoot, "database", "reader.sqlite3"),
-    ttsCache: join(localRoot, "tts-cache"),
-    models: join(localRoot, "models"),
-    logs: join(localRoot, "logs"),
-  };
+  return resolveLibraryPaths(process.env.EREADER_DATA_ROOT, process.env.LOCALAPPDATA, app.getPath("userData"));
 }
 
 function log(line: string): void {
-  const logRoot = paths?.logs ?? join(app.getPath("userData"), "logs");
-  mkdirSync(logRoot, { recursive: true });
-  appendFileSync(join(logRoot, "reader.log"), `${new Date().toISOString()} ${line}\n`, "utf8");
+  if (!logger) logger = new RotatingLogger(paths?.logs ?? join(app.getPath("userData"), "logs"));
+  logger.write(line);
 }
 
 function assertTrustedSender(event: Electron.IpcMainInvokeEvent): void {
@@ -51,7 +53,7 @@ function assertBookId(value: unknown): asserts value is string {
 
 async function openLegacyPath(filePath: string) {
   try {
-    const opened = await openPublication(filePath, repoRoot);
+    const opened = await openPublication(filePath, runtimeRoot);
     opened.restoredLocator = await legacyStateStore.load(opened.publication.bookId);
     return opened;
   } catch (error) {
@@ -62,7 +64,8 @@ async function openLegacyPath(filePath: string) {
 
 function setReadingMode(reading: boolean): void {
   if (!mainWindow || smokeTest) return;
-  mainWindow.setFullScreen(reading);
+  if (reading) mainWindow.setFullScreen(true);
+  else if (!defaultFullscreen) mainWindow.setFullScreen(false);
 }
 
 function registerIpc(): void {
@@ -156,30 +159,22 @@ function registerIpc(): void {
     else if (smokeTest) await legacyStateStore.save(value);
     else throw new Error("Locator does not belong to a library book.");
   });
-  ipcMain.handle("tts:health", async (event) => {
-    assertTrustedSender(event);
-    return tts.health();
-  });
-  ipcMain.handle("tts:synthesize", async (event, payload: unknown) => {
-    assertTrustedSender(event);
-    if (!payload || typeof payload !== "object") throw new Error("Invalid TTS request.");
-    const { text, speed, context } = payload as { text?: unknown; speed?: unknown; context?: unknown };
-    if (typeof text !== "string" || text.length === 0 || text.length > 2_000 || typeof speed !== "number" || speed < 0.5 || speed > 2) {
-      throw new Error("Invalid TTS request.");
-    }
-    return tts.synthesize(text, speed, context && typeof context === "object" ? context as Record<string, unknown> : {});
-  });
 }
 
 function createWindow(): void {
+  const workArea = screen.getPrimaryDisplay().workAreaSize;
+  const width = Math.min(1280, workArea.width);
+  const height = Math.min(900, workArea.height);
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 900,
-    minWidth: 700,
-    minHeight: 540,
+    width,
+    height,
+    minWidth: Math.min(700, width),
+    minHeight: Math.min(540, height),
+    fullscreen: defaultFullscreen,
     show: false,
     backgroundColor: "#f4f0e7",
     autoHideMenuBar: true,
+    icon: app.isPackaged ? join(process.resourcesPath, "icon.png") : join(runtimeRoot, "packaging", "assets", "icon.png"),
     webPreferences: {
       preload: resolve(__dirname, "../preload/index.cjs"),
       nodeIntegration: false,
@@ -191,25 +186,43 @@ function createWindow(): void {
       webviewTag: false,
     },
   });
-  hardenWindow(mainWindow, rendererFile);
+  hardenWindow(mainWindow, rendererFile, app.isPackaged);
   mainWindow.webContents.on("did-fail-load", (_event, code, description, url) => {
     log(`[renderer:load-failed] code=${code} description=${description} url=${url} expected=${rendererFile}`);
   });
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    log(`[renderer:gone] reason=${details.reason} exitCode=${details.exitCode}`);
+  });
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || input.key !== "F11") return;
+    event.preventDefault();
+    mainWindow?.setFullScreen(!mainWindow.isFullScreen());
+  });
+  mainWindow.on("unresponsive", () => log("[renderer:unresponsive]"));
   void mainWindow.loadFile(rendererFile).catch((error) => log(`[renderer:load-promise] ${String(error)}`));
   mainWindow.once("ready-to-show", () => mainWindow?.show());
   mainWindow.on("closed", () => { mainWindow = undefined; });
 }
 
 app.whenReady().then(async () => {
+  if (!instanceLockAcquired) return;
   paths = dataPaths();
+  logger = new RotatingLogger(paths.logs);
   lockDownSession(rendererFile);
   legacyStateStore = new ReadingStateStore(join(paths.database, "..", "legacy-reading-state"), log);
-  library = new LibraryService(paths, repoRoot, log);
+  library = new LibraryService(paths, runtimeRoot, log, async (sourcePath, targetPath) => {
+    const source = nativeImage.createFromPath(sourcePath);
+    if (source.isEmpty()) throw new Error("Unsupported or damaged cover image.");
+    const size = source.getSize();
+    const scale = Math.min(1, 320 / Math.max(1, size.width), 480 / Math.max(1, size.height));
+    const thumbnail = scale < 1
+      ? source.resize({ width: Math.max(1, Math.round(size.width * scale)), height: Math.max(1, Math.round(size.height * scale)), quality: "best" })
+      : source;
+    await import("node:fs/promises").then((module) => module.writeFile(targetPath, thumbnail.toPNG()));
+  });
   await library.initialize();
-  tts = new TtsSidecar(repoRoot, paths.ttsCache, log);
   registerIpc();
   createWindow();
-  void tts.start().catch((error) => log(`[tts:init] ${String(error)}`));
 }).catch((error) => {
   log(`[app:init-failed] ${error instanceof Error ? error.stack ?? error.message : String(error)}`);
   app.quit();
@@ -217,6 +230,5 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => {
-  tts?.shutdown();
   library?.close();
 });

@@ -13,7 +13,7 @@ test("secure Electron window renders and paginates the real EPUB fixture", async
     executablePath: resolve(repoRoot, "node_modules/electron/dist/electron.exe"),
     args: [repoRoot, "--smoke-test"],
     cwd: repoRoot,
-    env: { ...process.env, EREADER_DATA_ROOT: dataRoot, EREADER_STARTUP_MODE: "fixture", EREADER_TTS_PYTHON: resolve(repoRoot, "tts/.missing/python.exe") },
+    env: { ...process.env, EREADER_DATA_ROOT: dataRoot, EREADER_STARTUP_MODE: "fixture" },
   });
   try {
     const page = await application.firstWindow();
@@ -32,7 +32,7 @@ test("secure Electron window renders and paginates the real EPUB fixture", async
 
     const bookFrame = page.frameLocator("iframe.book-frame");
     await expect(bookFrame.locator("h1")).toContainText("第一章");
-    expect(await bookFrame.locator("[data-speech-unit-id]").count()).toBeGreaterThan(40);
+    expect(await bookFrame.locator("[data-reading-unit-id]").count()).toBeGreaterThan(40);
     expect(await page.evaluate(() => window.__EPUB_SCRIPT_EXECUTED__)).toBeUndefined();
     expect(await page.evaluate(() => window.__EPUB_HANDLER_EXECUTED__)).toBeUndefined();
     await expect(page.evaluate(() => fetch("https://example.invalid/tracker").then(() => "allowed").catch(() => "blocked"))).resolves.toBe("blocked");
@@ -52,17 +52,16 @@ test("secure Electron window renders and paginates the real EPUB fixture", async
     });
     await expect(page.locator(".reading-progress")).not.toHaveText(progressBeforeEdgeClick ?? "0%");
 
-    const visibleUnitId = await bookFrame.locator("[data-speech-unit-id]").evaluateAll((elements) => {
+    const visibleUnitId = await bookFrame.locator("[data-reading-unit-id]").evaluateAll((elements) => {
       const visible = elements.find((element) => {
         const rect = element.getBoundingClientRect();
         return rect.left >= 0 && rect.right <= document.documentElement.clientWidth && rect.top >= 0 && rect.bottom <= document.documentElement.clientHeight;
       });
-      return visible?.getAttribute("data-speech-unit-id") ?? "";
+      return visible?.getAttribute("data-reading-unit-id") ?? "";
     });
     expect(visibleUnitId).not.toBe("");
-    const selectedUnit = bookFrame.locator(`[data-speech-unit-id="${visibleUnitId}"]`);
-    await selectedUnit.click();
-    await expect(selectedUnit).toHaveClass(/is-active/);
+    const selectedUnit = bookFrame.locator(`[data-reading-unit-id="${visibleUnitId}"]`);
+    await selectedUnit.dispatchEvent("click");
     const fontSizeBefore = await bookFrame.locator("html").evaluate((root) => getComputedStyle(root).getPropertyValue("--font-size"));
     await page.keyboard.press("+");
     await expect.poll(() => bookFrame.locator("html").evaluate((root) => getComputedStyle(root).getPropertyValue("--font-size"))).not.toBe(fontSizeBefore);

@@ -4,7 +4,7 @@ Status: Phase 1 Library and Phase 2 Reader implemented, 2026-08-10.
 
 ## Product boundary
 
-V1 is a local Windows EPUB/no-DRM AZW3 reader with paginated reading and local TTS. It excludes PDF, DRM circumvention, cloud sync, notes, highlights, dictionaries, translation, recommendations, statistics, AI chat, and online stores.
+V1 is a local Windows EPUB/no-DRM AZW3 reader with paginated, E-Ink-inspired reading. It excludes PDF, DRM circumvention, cloud sync, speech, notes, dictionaries, translation, recommendations, statistics, AI chat, and online stores.
 
 ## Process and storage boundary
 
@@ -14,8 +14,6 @@ Electron renderer (React, no Node)
 Electron main
   -> LibraryService -> node:sqlite + app-owned files
   -> bounded EPUB/AZW3 adapters
-  -> stdin/stdout JSON Lines
-Persistent Python Kokoro sidecar (loaded only when requested)
 ```
 
 The normal Windows data root is `%LOCALAPPDATA%\EReader`:
@@ -25,18 +23,16 @@ library/<sha256>/source.epub|source.azw3
 library/<sha256>/publication.epub    # persisted AZW3 normalization only
 library/<sha256>/cover.svg
 database/reader.sqlite3
-tts-cache/<engine>/<book-id>/*.wav
-models/
 logs/reader.log
 ```
 
-The renderer never receives arbitrary filesystem/process APIs. Cover bytes and audio bytes cross the bridge as bounded data URLs; publication chapters cross as sanitized-input HTML strings and are sanitized again in the renderer.
+The renderer never receives arbitrary filesystem/process APIs. Cover and publication image bytes cross the bridge as bounded data URLs; publication chapters cross as sanitized-input HTML strings and are sanitized again in the renderer.
 
 ## SQLite and migrations
 
 `LibraryDatabase` uses Electron's Node 24 `node:sqlite` runtime, WAL mode, foreign keys, full synchronous writes, and a busy timeout. `schema_version` stores every applied migration. Each migration runs inside `BEGIN IMMEDIATE` / commit-or-rollback; initialization is repeatable and version 1 databases are upgraded to version 2 without data loss.
 
-`books` owns source/normalized/cover paths and SHA-256 identity. `reading_state` stores canonical view and TTS locator JSON plus total progression and cascades on book deletion. `settings` stores validated global reader settings. The database is never kept in the repository.
+`books` owns source/normalized/cover paths and SHA-256 identity. `reading_state` stores the canonical view locator plus total progression and cascades on book deletion. `settings` stores validated global reader settings. Migration 4 removes the obsolete speech locator column. The database is never kept in the repository.
 
 ## Import transaction
 
@@ -47,7 +43,7 @@ The renderer never receives arbitrary filesystem/process APIs. Cover bytes and a
 5. Generate a deterministic, escaped placeholder cover when no safely extracted cover is available.
 6. Rename staging to `library/<sha256>` and insert the database record transactionally. Any failure removes staging/final files.
 
-Startup removes abandoned import/delete staging directories and app-owned orphan directories with no database record. Book deletion first renames the owned directory to a private delete staging path, deletes the database row transactionally, then removes source, normalization, cover, and per-book TTS cache. It never touches the user's original import path.
+Startup removes abandoned import/delete staging directories and app-owned orphan directories with no database record. Book deletion first renames the owned directory to a private delete staging path, deletes the database row transactionally, then removes source, normalization, and cover. It never touches the user's original import path.
 
 ## EPUB and AZW3 publication model
 
@@ -61,12 +57,10 @@ AZW3 remains a fixed no-shell libmobi v0.12 sidecar built with `USE_ENCRYPTION=O
 
 Each active spine resource is sanitized and placed in a scriptless `sandbox="allow-same-origin"` iframe with a no-script/no-network CSP. CSS columns provide one viewport per page. Only the active chapter enters the DOM; the full large book is never concatenated into one document.
 
-The Reader supports keyboard and 23% edge navigation, forward/back chapter boundaries, hierarchical temporary TOC, current-chapter marking, page-following sentence selection, Ctrl+C, day/night appearance, and re-pagination for font, line height, margin, and resize. It has no persistent header, toolbar, sidebar, playback panel, or settings button.
+The Reader supports keyboard and 23% edge navigation, forward/back chapter boundaries, hierarchical temporary TOC, current-chapter marking, Ctrl+C, day/night appearance, and re-pagination for font size, line height, margin, and resize. It has no persistent header, toolbar, sidebar, playback panel, or settings button.
 
-The canonical locator contains book ID, spine href, stable speech-unit selector, local progression, total spine-weighted progression, and before/highlight/after text context. Page numbers are never persisted. A 250 ms debounce saves normal movement, while chapter/book switches and unmount also preserve the latest locator. Both task-kill recovery and normal-close restart are exercised against the same SQLite database.
+The canonical locator contains book ID, spine href, stable reading-unit selector, local progression, total spine-weighted progression, and before/highlight/after text context. Page numbers are never persisted. A 250 ms debounce saves normal movement, while chapter/book switches and unmount also preserve the latest locator. Both task-kill recovery and normal-close restart are exercised against the same SQLite database.
 
-## TTS boundary
+## E-Ink rendering boundary
 
-Kokoro is the internal default established by the Phase 0 RTX 4060 measurement. IndexTTS2 remains an explicit developer candidate with fallback and is not optimized in Phase 1/2. The sidecar is not warmed at bookshelf startup; it loads on the first health/synthesis request. Cache paths are grouped by book ID so deletion can remove only the relevant audio.
-
-Adaptive prefetch, LRU eviction, continuity/silence/loudness processing, background media controls, and long-form human listening remain Phase 3 work.
+The renderer injects one trusted, centralized theme stylesheet after publication sanitization. It maps paper, ink, rules, links, selections, and raster images to a restrained grayscale palette while retaining semantic headings, emphasis, quotations, lists, tables, and spacing. Lora and Noto Serif SC are app-owned offline font assets; publication content cannot inject font or network sources. The display layer uses static CSS only—no canvas loop, shader, blur, simulated ghosting, or dynamic noise.

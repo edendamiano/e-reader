@@ -1,9 +1,12 @@
 node_modules/
 dist/
+.build/
+release/
 coverage/
 .env
 .venv/
 tts/.venv/
+tts/.venv-release/
 tts/vendor/
 tts-cache/
 models/

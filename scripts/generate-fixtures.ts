@@ -16,6 +16,7 @@ async function writeEpub(outputPath: string, malicious = false): Promise<void> {
   zip.outputStream.pipe(output);
 
   addText(zip, "mimetype", "application/epub+zip", false);
+  zip.addBuffer(await fs.readFile(resolve(process.cwd(), "packaging/assets/icon.png")), "OEBPS/reader-image.png", { compress: true, mtime: FIXTURE_TIME, mode: 0o100644 });
   addText(zip, "META-INF/container.xml", `<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
   <rootfiles><rootfile full-path="OEBPS/package.opf" media-type="application/oebps-package+xml"/></rootfiles>
@@ -33,6 +34,7 @@ async function writeEpub(outputPath: string, malicious = false): Promise<void> {
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="c1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
     <item id="c2" href="chapter2.xhtml" media-type="application/xhtml+xml"/>
+    <item id="reader-image" href="reader-image.png" media-type="image/png"/>
   </manifest>
   <spine><itemref idref="c1"/><itemref idref="c2"/></spine>
 </package>`);
@@ -42,13 +44,13 @@ async function writeEpub(outputPath: string, malicious = false): Promise<void> {
 <li><a href="chapter1.xhtml">第一章</a></li><li><a href="chapter2.xhtml">第二章</a></li>
 </ol></nav></body></html>`);
 
-  const paragraphs = Array.from({ length: 34 }, (_, index) => `<p>这是第 ${index + 1} 段合成测试文字。我们使用 Transformer architecture 处理中英混排，并检查数字 2026、缩写 AI 与百分数 37% 的连续朗读。The same paragraph also contains an English sentence for stable pagination and language handling.</p>`).join("\n");
+  const paragraphs = Array.from({ length: 34 }, (_, index) => `<p>这是第 ${index + 1} 段混合排版测试文字。我们使用 Transformer architecture 检查中英混排，并包含数字 2026、缩写 AI 与百分数 37%。The same paragraph also contains an English sentence for stable pagination and typography.</p>`).join("\n");
   const attack = malicious
     ? `<script>window.top.__EPUB_SCRIPT_EXECUTED__ = true</script><img src="https://example.invalid/tracker.png" onerror="window.top.__EPUB_HANDLER_EXECUTED__=true"/><iframe src="https://example.invalid/"></iframe>`
     : "";
   addText(zip, "OEBPS/chapter1.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="zh-CN"><head><title>第一章</title></head>
-<body><h1>第一章 安静的页面</h1><p>一句中文。</p><p>One English sentence.</p>${paragraphs}${attack}</body></html>`);
+<body><h1>第一章 安静的页面</h1><p>一句中文。</p><p>One English sentence.</p><img src="reader-image.png" alt="Color image grayscale test"/>${paragraphs}${attack}</body></html>`);
   addText(zip, "OEBPS/chapter2.xhtml", `<?xml version="1.0" encoding="UTF-8"?>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><title>Chapter Two</title></head>
 <body><h1>Chapter Two</h1><p>The locator should survive a font-size change near this sentence.</p></body></html>`);

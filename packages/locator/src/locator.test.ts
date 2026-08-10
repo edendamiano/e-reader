@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { createUnitLocator, restoreUnitIndex } from "./locator";
-import type { SpeechUnit } from "../../shared/src/types";
+import type { ReadingUnit } from "../../shared/src/types";
 
-function units(): SpeechUnit[] {
+function units(): ReadingUnit[] {
   return ["第一句。", "The second sentence.", "最后一句。"].map((text, order) => ({
-    id: `speech-${order}`,
+    id: `reading-${order}`,
     bookId: "fixture",
     href: "OEBPS/chapter.xhtml",
-    locator: createUnitLocator("fixture", "OEBPS/chapter.xhtml", `speech-${order}`, text, order / 2),
+    locator: createUnitLocator("fixture", "OEBPS/chapter.xhtml", `reading-${order}`, text, order / 2),
     text,
     type: "paragraph",
     order,
@@ -15,7 +15,7 @@ function units(): SpeechUnit[] {
 }
 
 describe("stable locator fallback", () => {
-  it("restores the exact speech unit after repagination", () => {
+  it("restores the exact reading unit after repagination", () => {
     const source = units();
     expect(restoreUnitIndex(source, source[1]?.locator)).toBe(1);
   });

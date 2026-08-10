@@ -21,7 +21,6 @@ test("real no-DRM KF8 is normalized and rendered through the shared Publication 
       EREADER_DATA_ROOT: dataRoot,
       EREADER_STARTUP_MODE: "fixture",
       EREADER_DEFAULT_BOOK: azw3Path,
-      EREADER_TTS_PYTHON: resolve(repoRoot, "tts/.missing/python.exe"),
     },
   });
   try {
@@ -29,7 +28,7 @@ test("real no-DRM KF8 is normalized and rendered through the shared Publication 
     await expect(page.getByTestId("reader-ready")).toBeVisible({ timeout: 20_000 });
     const bookFrame = page.frameLocator("iframe.book-frame");
     await expect(bookFrame.locator("body")).toContainText("Alice", { timeout: 8_000 });
-    expect(await bookFrame.locator("[data-speech-unit-id]").count()).toBeGreaterThan(0);
+    expect(await bookFrame.locator("[data-reading-unit-id]").count()).toBeGreaterThan(0);
     await page.screenshot({ path: screenshotPath });
   } finally {
     await application.close();

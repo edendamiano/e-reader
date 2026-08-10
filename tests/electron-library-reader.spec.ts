@@ -17,7 +17,6 @@ async function launch(dataRoot: string): Promise<{ application: ElectronApplicat
     env: {
       ...process.env,
       EREADER_DATA_ROOT: dataRoot,
-      EREADER_TTS_PYTHON: resolve(repoRoot, "tts/.missing/python.exe"),
     },
   });
   const page = await application.firstWindow();
@@ -103,11 +102,13 @@ test("daily Library and full-spine Reader survive source deletion and abrupt res
     const forwardProgress = await page.locator(".reading-progress").textContent();
     await page.keyboard.press("ArrowLeft");
     await expect(page.locator(".reading-progress")).not.toHaveText(forwardProgress ?? "0%");
+    const beforeEdgeProgress = await page.locator(".reading-progress").textContent();
     await bookFrame.locator("html").evaluate((root) => root.dispatchEvent(new MouseEvent("click", {
       bubbles: true,
       clientX: document.documentElement.clientWidth * 0.9,
       clientY: document.documentElement.clientHeight * 0.5,
     })));
+    await expect(page.locator(".reading-progress")).not.toHaveText(beforeEdgeProgress ?? "0%");
     const edgeProgress = await page.locator(".reading-progress").textContent();
     await bookFrame.locator("html").evaluate((root) => root.dispatchEvent(new MouseEvent("click", {
       bubbles: true,
@@ -128,9 +129,8 @@ test("daily Library and full-spine Reader survive source deletion and abrupt res
     await page.screenshot({ path: join(screenshotRoot, "toc.png") });
     await page.getByTestId("toc-panel").getByRole("button", { name: "第二章" }).click();
     await expect(bookFrame.locator("h1")).toContainText("Chapter Two", { timeout: 8_000 });
-    const unit = bookFrame.locator("[data-speech-unit-id]").last();
+    const unit = bookFrame.locator("[data-reading-unit-id]").last();
     await unit.click();
-    await expect(unit).toHaveClass(/is-active/);
     await page.keyboard.press("+");
     await first.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(1060, 760));
     await expect(unit).toBeVisible();

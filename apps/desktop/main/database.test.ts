@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LibraryDatabase } from "./database";
 
@@ -15,6 +16,8 @@ const BOOK = {
   libraryPath: "C:\\library\\a\\source.epub",
   normalizedPath: undefined,
   coverPath: "C:\\library\\a\\cover.svg",
+  originalCoverPath: undefined,
+  coverMime: undefined,
   addedAt: "2026-08-10T00:00:00.000Z",
   lastOpenedAt: undefined,
   languageHint: "en",
@@ -32,12 +35,12 @@ describe("LibraryDatabase migrations and transactions", () => {
   it("initializes a new database and reopens without repeating migrations", () => {
     const path = join(root, "reader.sqlite3");
     const first = new LibraryDatabase(path);
-    expect(first.getSchemaVersion()).toBe(2);
+    expect(first.getSchemaVersion()).toBe(4);
     first.insertBook(BOOK);
     first.close();
 
     const reopened = new LibraryDatabase(path);
-    expect(reopened.getSchemaVersion()).toBe(2);
+    expect(reopened.getSchemaVersion()).toBe(4);
     expect(reopened.getBook(BOOK.id)?.title).toBe("A Book");
     reopened.close();
   });
@@ -49,9 +52,30 @@ describe("LibraryDatabase migrations and transactions", () => {
     versionOne.close();
 
     const upgraded = new LibraryDatabase(path);
-    expect(upgraded.getSchemaVersion()).toBe(2);
+    expect(upgraded.getSchemaVersion()).toBe(4);
     upgraded.insertBook(BOOK);
     expect(upgraded.listBooks("", "title")).toHaveLength(1);
+    upgraded.close();
+  });
+
+  it("upgrades a version-two library without changing existing cover records", () => {
+    const path = join(root, "reader.sqlite3");
+    const versionTwo = new LibraryDatabase(path, 2);
+    versionTwo.close();
+    const oldDatabase = new DatabaseSync(path);
+    oldDatabase.prepare(`INSERT INTO books(
+      id, sha256, format, title, author, source_filename, library_path, normalized_path,
+      cover_path, added_at, last_opened_at, language_hint, sort_title
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      BOOK.id, BOOK.sha256, BOOK.format, BOOK.title, BOOK.author, BOOK.sourceFilename,
+      BOOK.libraryPath, null, BOOK.coverPath, BOOK.addedAt, null, BOOK.languageHint, "a book",
+    );
+    oldDatabase.close();
+
+    const upgraded = new LibraryDatabase(path);
+    expect(upgraded.getSchemaVersion()).toBe(4);
+    expect(upgraded.getBook(BOOK.id)).toMatchObject({ coverPath: BOOK.coverPath });
+    expect(upgraded.getBook(BOOK.id)?.originalCoverPath).toBeUndefined();
     upgraded.close();
   });
 

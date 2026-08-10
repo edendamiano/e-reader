@@ -20,15 +20,15 @@ export interface ReadingLocator {
   text?: LocatorText;
 }
 
-export type SpeechUnitType = "heading" | "paragraph" | "quote" | "list";
+export type ReadingUnitType = "heading" | "paragraph" | "quote" | "list";
 
-export interface SpeechUnit {
+export interface ReadingUnit {
   id: string;
   bookId: string;
   href: string;
   locator: ReadingLocator;
   text: string;
-  type: SpeechUnitType;
+  type: ReadingUnitType;
   order: number;
 }
 
@@ -39,6 +39,11 @@ export interface PublicationLinkDto {
   children?: PublicationLinkDto[];
 }
 
+export interface PublicationCoverDto {
+  href: string;
+  type: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+}
+
 export interface PublicationDto {
   bookId: string;
   sourcePath: string;
@@ -47,6 +52,7 @@ export interface PublicationDto {
   languages: string[];
   readingOrder: PublicationLinkDto[];
   toc: PublicationLinkDto[];
+  cover?: PublicationCoverDto;
 }
 
 export interface OpenPublicationResult {
@@ -81,13 +87,11 @@ export interface ImportResult {
 }
 
 export interface ReaderSettings {
-  fontFamily: "serif" | "sans";
   fontSize: number;
   lineHeight: number;
   pageMargin: number;
   theme: "day" | "night";
   showProgress: boolean;
-  speechRate: number;
 }
 
 export interface StartupState {
@@ -99,18 +103,6 @@ export interface StartupState {
 export interface PublicationResourceResult {
   href: string;
   rawHtml: string;
-}
-
-export interface TtsHealth {
-  ready: boolean;
-  detail?: string;
-}
-
-export interface TtsSynthesisResult {
-  requestId: string;
-  audioDataUrl: string;
-  durationMs: number;
-  cacheHit: boolean;
 }
 
 export interface EReaderBridge {
@@ -128,6 +120,4 @@ export interface EReaderBridge {
   openDefaultFixture(): Promise<OpenPublicationResult>;
   loadSavedLocator(bookId: string): Promise<ReadingLocator | undefined>;
   saveLocator(locator: ReadingLocator): Promise<void>;
-  ttsHealth(): Promise<TtsHealth>;
-  synthesize(text: string, speed: number, context: Record<string, unknown>): Promise<TtsSynthesisResult>;
 }
