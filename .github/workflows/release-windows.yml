@@ -1,0 +1,37 @@
+name: Release Windows installer
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run verification
+        run: npm run verify
+
+      - name: Build Windows installer
+        run: npm run package:win
+
+      - name: Upload and publish v1.0.2
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.0.2 "release/E-Reader-Setup-1.0.2.exe#E-Reader-Setup-1.0.2.exe" --clobber
+          gh release edit v1.0.2 --draft=false --latest
