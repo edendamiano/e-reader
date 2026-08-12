@@ -26,7 +26,7 @@ jobs:
         run: npm run verify
 
       - name: Build Windows installer
-        run: npm run package:win
+        run: npm run build && npx electron-builder --win nsis --x64 --publish never
 
       - name: Upload and publish v1.0.2
         shell: pwsh
