@@ -14,6 +14,14 @@ function scrollingElement(frame: HTMLIFrameElement): HTMLElement | undefined {
   return frame.contentDocument?.getElementById("book-content") ?? undefined;
 }
 
+function paginationPitch(frame: HTMLIFrameElement, content: HTMLElement): number {
+  const style = frame.contentWindow?.getComputedStyle(content);
+  const columnWidth = Number.parseFloat(style?.columnWidth ?? "");
+  const columnGap = Number.parseFloat(style?.columnGap ?? "");
+  const measured = columnWidth + columnGap;
+  return Number.isFinite(measured) && measured > 0 ? measured : Math.max(1, frame.clientWidth);
+}
+
 function hrefBase(href: string): string {
   return href.split("#", 1)[0]?.split("?", 1)[0] ?? href;
 }
@@ -144,9 +152,10 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
       void loadSpineIndex(spineIndex + 1, "start");
       return;
     }
-    const width = Math.max(1, frame.clientWidth);
+    const viewportWidth = Math.max(1, frame.clientWidth);
+    const pitch = paginationPitch(frame, scrolling);
     const bounded = Math.max(0, Math.min(pageCountRef.current - 1, nextPage));
-    const targetLeft = bounded * width;
+    const targetLeft = bounded * pitch;
     const startLeft = scrolling.scrollLeft;
     const distance = targetLeft - startLeft;
     window.cancelAnimationFrame(pageAnimationRef.current ?? 0);
@@ -158,7 +167,7 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
       if (!persist || pageRef.current !== bounded) return;
       const visibleElement = Array.from(frame.contentDocument?.querySelectorAll<HTMLElement>("[data-reading-unit-id]") ?? []).find((element) => {
         const rect = element.getBoundingClientRect();
-        return rect.right > 0 && rect.left < width && rect.bottom > 0 && rect.top < frame.clientHeight;
+        return rect.right > 0 && rect.left < viewportWidth && rect.bottom > 0 && rect.top < frame.clientHeight;
       });
       const visible = visibleElement?.dataset.readingUnitId
         ? prepared.units.find((unit) => unit.id === visibleElement.dataset.readingUnitId)
@@ -210,8 +219,8 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
     document.documentElement.style.setProperty("--rule", settings.theme === "night" ? "rgba(210, 208, 200, 0.25)" : "rgba(28, 29, 27, 0.28)");
     document.documentElement.style.setProperty("--image-filter", settings.theme === "night" ? "grayscale(1) saturate(0) contrast(0.9) brightness(0.8)" : "grayscale(1) saturate(0) contrast(0.94) brightness(1.035)");
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      const width = Math.max(1, frame.clientWidth);
-      const count = Math.max(1, Math.ceil(Math.max(scrolling.scrollWidth, content.scrollWidth) / width));
+      const pitch = paginationPitch(frame, content);
+      const count = Math.max(1, Math.ceil(Math.max(scrolling.scrollWidth, content.scrollWidth) / pitch));
       pageCountRef.current = count;
       setPageCount(count);
       const target = locator ?? pendingRestoreRef.current ?? viewLocatorRef.current ?? opened.restoredLocator;
@@ -220,8 +229,8 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
       const restoreUnit = prepared.units[restoreIndex];
       const element = restoreUnit ? document.querySelector(restoreUnit.locator.locations.cssSelector ?? "") : undefined;
       const absoluteLeft = element ? element.getBoundingClientRect().left + scrolling.scrollLeft : 0;
-      const restoredPage = Math.max(0, Math.min(count - 1, Math.floor((absoluteLeft + 1) / width)));
-      scrolling.scrollLeft = restoredPage * width;
+      const restoredPage = Math.max(0, Math.min(count - 1, Math.floor((absoluteLeft + 1) / pitch)));
+      scrolling.scrollLeft = restoredPage * pitch;
       pageRef.current = restoredPage;
       setPage(restoredPage);
       const local = count <= 1 ? (target?.locations.progression ?? 0) : restoredPage / (count - 1);

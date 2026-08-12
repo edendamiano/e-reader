@@ -108,6 +108,10 @@ test("reader keeps equal left and right margins at every supported setting", asy
     await page.waitForTimeout(50);
     const before = await main.evaluate((element) => element.scrollLeft);
     const viewportWidth = await main.evaluate((element) => element.ownerDocument.defaultView?.innerWidth ?? 0);
+    const pitch = await main.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return Number.parseFloat(style.columnWidth) + Number.parseFloat(style.columnGap);
+    });
     const paginationDiagnostics = await main.evaluate((element) => ({
       scrollWidth: element.scrollWidth,
       contentScrollWidth: element.scrollWidth,
@@ -118,10 +122,10 @@ test("reader keeps equal left and right margins at every supported setting", asy
     await page.waitForTimeout(80);
     const midway = await main.evaluate((element) => element.scrollLeft);
     expect(midway).toBeGreaterThan(before);
-    expect(midway).toBeLessThan(before + viewportWidth);
+    expect(midway).toBeLessThan(before + pitch);
     await page.waitForTimeout(140);
     const afterArrow = await main.evaluate((element) => element.scrollLeft);
-    expect(Math.abs(afterArrow - (before + viewportWidth))).toBeLessThanOrEqual(1);
+    expect(Math.abs(afterArrow - (before + pitch))).toBeLessThanOrEqual(0.5);
 
     const clickedPageEdge = await main.evaluate((element) => {
       const document = element.ownerDocument;
@@ -137,7 +141,13 @@ test("reader keeps equal left and right margins at every supported setting", asy
     expect(clickedPageEdge).toBe(true);
     await page.waitForTimeout(220);
     const afterTextClick = await main.evaluate((element) => element.scrollLeft);
-    expect(Math.abs(afterTextClick - (afterArrow + viewportWidth))).toBeLessThanOrEqual(1);
+    expect(Math.abs(afterTextClick - (afterArrow + pitch))).toBeLessThanOrEqual(0.5);
+    for (let index = 0; index < 16; index += 1) {
+      await main.evaluate((element) => element.ownerDocument.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })));
+      await page.waitForTimeout(180);
+    }
+    const afterEighteenPages = await main.evaluate((element) => element.scrollLeft);
+    expect(Math.abs(afterEighteenPages - pitch * 18)).toBeLessThanOrEqual(0.5);
     const turnedPageGeometry = await main.evaluate((element) => {
       const content = element.getBoundingClientRect();
       const visibleRects = Array.from(element.querySelectorAll(".reading-unit")).flatMap((unit) => {
