@@ -88,6 +88,11 @@ export function readerThemeCss(): string {
     hr { border: 0; border-top: 1px solid var(--rule) !important; }
     table { border-collapse: collapse; }
     th, td { border: 1px solid var(--rule) !important; padding: 0.3em 0.45em; }
+    body mark.reader-search-hit {
+      color: var(--ink) !important;
+      background-color: rgba(122, 127, 109, 0.3) !important;
+      border-radius: 0.08em;
+    }
     img {
       display: block;
       max-width: 100%;

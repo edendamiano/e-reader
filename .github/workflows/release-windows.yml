@@ -28,10 +28,13 @@ jobs:
       - name: Build Windows installer
         run: npm run build && npx electron-builder --win nsis --x64 --publish never
 
-      - name: Upload and publish v1.0.2
+      - name: Upload and publish the current package version
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload v1.0.2 "release/E-Reader-Setup-1.0.2.exe#E-Reader-Setup-1.0.2.exe" --clobber
-          gh release edit v1.0.2 --draft=false --latest
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tag = "v$version"
+          $installer = "E-Reader-Setup-$version.exe"
+          gh release upload $tag "release/$installer#$installer" --clobber
+          gh release edit $tag --draft=false --latest

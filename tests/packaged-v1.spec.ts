@@ -67,6 +67,11 @@ test("packaged EXE imports, reads, blocks network, and resumes", async () => {
     await tile.filter({ hasText: "E-Reader Phase 0 Fixture" }).dblclick();
     await expect(page.getByTestId("reader-ready")).toBeVisible({ timeout: 20_000 });
     await expect(page.frameLocator("iframe.book-frame").locator("h1")).toContainText("第一章");
+    await page.keyboard.press("Control+F");
+    await page.getByLabel("搜索当前整本书").fill("我们使用 transformer architecture，检查中英混排");
+    await expect(page.getByTestId("book-search-status")).toContainText("找到 34 处匹配", { timeout: 20_000 });
+    await page.getByTestId("book-search-result").first().click();
+    await expect(page.frameLocator("iframe.book-frame").locator("mark.reader-search-hit").first()).toBeVisible();
     await expect(page.evaluate(() => fetch("https://example.invalid/telemetry").then(() => "allowed").catch(() => "blocked"))).resolves.toBe("blocked");
     await expect(page.evaluate(() => fetch("file:///C:/Windows/win.ini").then(() => "allowed").catch(() => "blocked"))).resolves.toBe("blocked");
     await page.keyboard.press("ArrowRight");

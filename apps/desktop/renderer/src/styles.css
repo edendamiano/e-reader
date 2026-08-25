@@ -117,6 +117,22 @@ button:hover, select:hover { border-color: #716a5f; }
 .toc-list button:hover { background: rgba(89, 82, 70, 0.07); }
 .toc-list button.is-current { border-left: 3px solid #70685c; font-weight: 650; background: rgba(89, 82, 70, 0.09); }
 .theme-night .toc-list button.is-current { border-left-color: #b5ac9c; background: rgba(216, 211, 200, 0.08); }
+.search-panel { width: min(720px, calc(100vw - 48px)); max-height: 80vh; }
+.book-search-field { position: sticky; top: 58px; z-index: 1; padding: 15px 18px 10px; background: inherit; border-bottom: 1px solid rgba(99, 94, 84, 0.18); }
+.book-search-field input { width: 100%; min-height: 42px; border: 1px solid #aaa294; border-radius: 2px; background: #faf8f3; color: #302e29; padding: 9px 12px; outline-color: #70685c; }
+.theme-night .book-search-field input { border-color: #55564f; background: #1b1c1a; color: #d8d3c8; outline-color: #aaa89f; }
+.book-search-status { min-height: 18px; margin: 8px 0 0; color: #746d61; font-size: 12px; }
+.theme-night .book-search-status { color: #aaa89f; }
+.book-search-results { margin: 0; padding: 0; list-style: none; }
+.book-search-results li { border-bottom: 1px solid rgba(99, 94, 84, 0.15); }
+.book-search-results button { display: grid; width: 100%; gap: 7px; border: 0; background: transparent; padding: 13px 18px; text-align: start; }
+.book-search-results button:hover, .book-search-results button:focus-visible { background: rgba(89, 82, 70, 0.08); outline: none; }
+.theme-night .book-search-results button:hover, .theme-night .book-search-results button:focus-visible { background: rgba(216, 211, 200, 0.08); }
+.book-search-chapter { color: #6b6358; font-size: 12px; }
+.theme-night .book-search-chapter { color: #aaa89f; }
+.book-search-excerpt { color: #37342f; font: 14px/1.65 Georgia, "Noto Serif CJK SC", SimSun, serif; }
+.theme-night .book-search-excerpt { color: #d8d3c8; }
+.book-search-excerpt strong { background: rgba(122, 127, 109, 0.2); font-weight: 600; }
 
 @media (max-width: 760px) {
   .library-header { align-items: flex-start; padding: 18px 0; }

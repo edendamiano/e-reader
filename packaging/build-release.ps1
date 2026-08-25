@@ -12,7 +12,7 @@ Push-Location $repo
 try {
   npm run build
   if ($LASTEXITCODE -ne 0) { throw "Application build failed." }
-  npx electron-builder --win nsis --x64
+  npx electron-builder --win nsis --x64 --publish never
   if ($LASTEXITCODE -ne 0) { throw "Windows installer build failed." }
 }
 finally {

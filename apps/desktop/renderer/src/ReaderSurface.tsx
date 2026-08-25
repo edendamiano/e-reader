@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createUnitLocator, restoreUnitIndex } from "../../../../packages/locator/src/locator";
 import type { OpenPublicationResult, PublicationLinkDto, ReaderSettings, ReadingLocator, ReadingUnit } from "../../../../packages/shared/src/types";
+import { indexSearchChapter, normalizeSearchText, searchBook, searchChapterTitle, type BookSearchResult, type IndexedSearchChapter } from "./book-search";
 import { prepareReaderDocument } from "./reader-document";
 
 interface ReaderSurfaceProps {
@@ -26,6 +27,52 @@ function hrefBase(href: string): string {
   return href.split("#", 1)[0]?.split("?", 1)[0] ?? href;
 }
 
+function clearSearchHighlights(document: Document | undefined): void {
+  if (!document) return;
+  const parents = new Set<Node>();
+  for (const mark of Array.from(document.querySelectorAll("mark.reader-search-hit"))) {
+    if (mark.parentNode) parents.add(mark.parentNode);
+    mark.replaceWith(document.createTextNode(mark.textContent ?? ""));
+  }
+  parents.forEach((parent) => parent.normalize());
+}
+
+function addSearchHighlights(document: Document, result: BookSearchResult): HTMLElement | undefined {
+  const anchorId = result.highlights[0]?.unitId;
+  const anchor = anchorId ? document.querySelector<HTMLElement>(`[data-reading-unit-id="${anchorId}"]`) : undefined;
+  const expected = result.locator.text?.highlight;
+  if (!anchor || (expected && !normalizeSearchText(anchor.textContent ?? "").startsWith(normalizeSearchText(expected)))) return undefined;
+  clearSearchHighlights(document);
+  let firstMark: HTMLElement | undefined;
+  const ids = Array.from(new Set(result.highlights.map((highlight) => highlight.unitId)));
+
+  for (const id of ids) {
+    const unit = document.querySelector<HTMLElement>(`[data-reading-unit-id="${id}"]`);
+    if (!unit) continue;
+    const text = unit.textContent ?? "";
+    const ranges = result.highlights.filter((highlight) => highlight.unitId === id).sort((left, right) => left.start - right.start);
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    for (const range of ranges) {
+      const start = Math.max(cursor, Math.min(text.length, range.start));
+      const end = Math.max(start, Math.min(text.length, range.end));
+      if (start > cursor) fragment.append(document.createTextNode(text.slice(cursor, start)));
+      if (end > start) {
+        const mark = document.createElement("mark");
+        mark.className = "reader-search-hit";
+        mark.textContent = text.slice(start, end);
+        fragment.append(mark);
+        firstMark ??= mark;
+      }
+      cursor = end;
+    }
+    if (cursor < text.length) fragment.append(document.createTextNode(text.slice(cursor)));
+    unit.replaceChildren(fragment);
+  }
+
+  return firstMark;
+}
+
 function TocTree({ links, currentHref, onSelect, depth = 0 }: {
   links: PublicationLinkDto[];
   currentHref: string;
@@ -49,14 +96,22 @@ function TocTree({ links, currentHref, onSelect, depth = 0 }: {
 
 export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: ReaderSurfaceProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const saveTimerRef = useRef<number>();
   const resizeTimerRef = useRef<number>();
   const transientTimerRef = useRef<number>();
+  const searchTimerRef = useRef<number>();
+  const highlightTimerRef = useRef<number>();
   const pageAnimationRef = useRef<number>();
   const pageRef = useRef(0);
   const pageCountRef = useRef(1);
   const viewLocatorRef = useRef<ReadingLocator | undefined>(opened.restoredLocator);
   const pendingRestoreRef = useRef<ReadingLocator | undefined>(opened.restoredLocator);
+  const pendingSearchResultRef = useRef<BookSearchResult>();
+  const searchIndexRef = useRef<IndexedSearchChapter[]>([]);
+  const searchPromiseRef = useRef<Promise<void>>();
+  const searchCompleteRef = useRef(false);
+  const searchQueryRef = useRef("");
   const navigatingRef = useRef(false);
   const frameClickHandlerRef = useRef<(event: MouseEvent) => void>(() => undefined);
   const keyHandlerRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
@@ -67,6 +122,10 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
   const [fontSize, setFontSize] = useState(settings.fontSize);
   const [message, setMessage] = useState("");
   const [tocOpen, setTocOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<BookSearchResult[]>([]);
+  const [searchProgress, setSearchProgress] = useState({ indexed: 0, total: 0, failed: 0, working: false });
   const locale = opened.publication.languages[0] ?? "und";
   const spine = opened.publication.readingOrder;
   const spineIndex = Math.max(0, spine.findIndex((link) => hrefBase(link.href) === hrefBase(resource.href)));
@@ -79,6 +138,50 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
     window.clearTimeout(transientTimerRef.current);
     setMessage(value);
     if (value) transientTimerRef.current = window.setTimeout(() => setMessage(""), 1_400);
+  }, []);
+
+  const buildSearchIndex = useCallback(async () => {
+    if (searchCompleteRef.current) return;
+    if (searchPromiseRef.current) return searchPromiseRef.current;
+
+    const indexing = (async () => {
+      const chapters: IndexedSearchChapter[] = [];
+      let failed = 0;
+      setSearchProgress({ indexed: 0, total: spine.length, failed: 0, working: true });
+
+      for (let index = 0; index < spine.length; index += 1) {
+        const link = spine[index];
+        if (!link) continue;
+        try {
+          const current = hrefBase(link.href) === hrefBase(resource.href);
+          const loaded = current ? resource : await window.ereader.loadPublicationResource(opened.publication.bookId, link.href);
+          const units = current ? prepared.units : prepareReaderDocument(loaded.rawHtml, opened.publication.bookId, loaded.href, locale).units;
+          const title = searchChapterTitle(loaded.href, index, opened.publication.toc, units, link.title);
+          chapters.push(indexSearchChapter(loaded.href, title, index, units));
+          searchIndexRef.current = [...chapters];
+          if (searchQueryRef.current.trim()) setSearchResults(searchBook(searchIndexRef.current, searchQueryRef.current));
+        } catch {
+          failed += 1;
+        }
+        setSearchProgress({ indexed: index + 1, total: spine.length, failed, working: true });
+        await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      }
+
+      searchCompleteRef.current = true;
+      setSearchProgress({ indexed: spine.length, total: spine.length, failed, working: false });
+    })();
+
+    searchPromiseRef.current = indexing.finally(() => {
+      searchPromiseRef.current = undefined;
+    });
+    return searchPromiseRef.current;
+  }, [locale, opened.publication.bookId, opened.publication.toc, prepared.units, resource, spine]);
+
+  const showSearchHighlights = useCallback((document: Document, result: BookSearchResult): HTMLElement | undefined => {
+    window.clearTimeout(highlightTimerRef.current);
+    const mark = addSearchHighlights(document, result);
+    highlightTimerRef.current = window.setTimeout(() => clearSearchHighlights(document), 4_500);
+    return mark;
   }, []);
 
   const queueLocatorSave = useCallback((locator: ReadingLocator) => {
@@ -229,14 +332,58 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
       const restoreUnit = prepared.units[restoreIndex];
       const element = restoreUnit ? document.querySelector(restoreUnit.locator.locations.cssSelector ?? "") : undefined;
       const absoluteLeft = element ? element.getBoundingClientRect().left + scrolling.scrollLeft : 0;
-      const restoredPage = Math.max(0, Math.min(count - 1, Math.floor((absoluteLeft + 1) / pitch)));
+      let restoredPage = Math.max(0, Math.min(count - 1, Math.floor((absoluteLeft + 1) / pitch)));
       scrolling.scrollLeft = restoredPage * pitch;
+      const searchResult = pendingSearchResultRef.current;
+      if (searchResult && hrefBase(searchResult.href) === hrefBase(resource.href)) {
+        const mark = showSearchHighlights(document, searchResult);
+        if (mark) {
+          pendingSearchResultRef.current = undefined;
+          const matchLeft = mark.getBoundingClientRect().left + scrolling.scrollLeft;
+          restoredPage = Math.max(0, Math.min(count - 1, Math.floor((matchLeft + 1) / pitch)));
+          scrolling.scrollLeft = restoredPage * pitch;
+        }
+      }
       pageRef.current = restoredPage;
       setPage(restoredPage);
       const local = count <= 1 ? (target?.locations.progression ?? 0) : restoredPage / (count - 1);
       setTotalProgress(spine.length <= 1 ? local : (spineIndex + local) / spine.length);
     }));
-  }, [fontSize, opened.restoredLocator, prepared.units, settings.lineHeight, settings.pageMargin, settings.theme, spine.length, spineIndex]);
+  }, [fontSize, opened.restoredLocator, prepared.units, resource.href, settings.lineHeight, settings.pageMargin, settings.theme, showSearchHighlights, spine.length, spineIndex]);
+
+  const jumpToSearchResult = useCallback(async (result: BookSearchResult) => {
+    if (navigatingRef.current) return;
+    const local = result.locator.locations.progression ?? 0;
+    const locator: ReadingLocator = {
+      ...result.locator,
+      locations: {
+        ...result.locator.locations,
+        totalProgression: spine.length <= 1 ? local : (result.spineIndex + local) / spine.length,
+      },
+    };
+    pendingSearchResultRef.current = result;
+    pendingRestoreRef.current = locator;
+    viewLocatorRef.current = locator;
+    setSearchOpen(false);
+    queueLocatorSave(locator);
+
+    if (hrefBase(result.href) === hrefBase(resource.href)) {
+      repaginate(locator);
+      return;
+    }
+
+    navigatingRef.current = true;
+    try {
+      const next = await window.ereader.loadPublicationResource(opened.publication.bookId, result.href);
+      setResource(next);
+      setTocOpen(false);
+    } catch {
+      pendingSearchResultRef.current = undefined;
+      setTransientMessage("无法打开搜索结果所在章节。");
+    } finally {
+      navigatingRef.current = false;
+    }
+  }, [opened.publication.bookId, queueLocatorSave, repaginate, resource.href, setTransientMessage, spine.length]);
 
   const changeSettings = useCallback((next: ReaderSettings) => {
     void onSettingsChange(next).catch(() => setTransientMessage("设置暂时无法保存。"));
@@ -244,12 +391,20 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
 
   keyHandlerRef.current = (event: KeyboardEvent) => {
     if (event.ctrlKey && event.key.toLowerCase() === "c") return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      setTocOpen(false);
+      setSearchOpen(true);
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
-      if (tocOpen) setTocOpen(false);
+      if (searchOpen) setSearchOpen(false);
+      else if (tocOpen) setTocOpen(false);
       else void onExit();
       return;
     }
+    if (searchOpen) return;
     if (event.key.toLowerCase() === "t" && !event.ctrlKey && !event.altKey) {
       event.preventDefault();
       setTocOpen((value) => !value);
@@ -318,10 +473,27 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
     if (iframeRef.current?.contentDocument?.readyState === "complete") repaginate(viewLocatorRef.current);
   }, [repaginate, settings.fontSize]);
 
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+    window.clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = window.setTimeout(() => {
+      setSearchResults(searchBook(searchIndexRef.current, searchQuery));
+    }, 120);
+    return () => window.clearTimeout(searchTimerRef.current);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+    void buildSearchIndex().catch(() => setTransientMessage("全文搜索暂时无法完成。"));
+  }, [buildSearchIndex, searchOpen, setTransientMessage]);
+
   useEffect(() => () => {
     window.clearTimeout(saveTimerRef.current);
     window.clearTimeout(resizeTimerRef.current);
     window.clearTimeout(transientTimerRef.current);
+    window.clearTimeout(searchTimerRef.current);
+    window.clearTimeout(highlightTimerRef.current);
     window.cancelAnimationFrame(pageAnimationRef.current ?? 0);
     if (viewLocatorRef.current) void window.ereader.saveLocator(viewLocatorRef.current).catch(() => undefined);
     const document = iframeRef.current?.contentDocument;
@@ -346,6 +518,41 @@ export function ReaderSurface({ opened, settings, onExit, onSettingsChange }: Re
       />
       {settings.showProgress && <div className="reading-progress" aria-label="阅读进度">{Math.round(Math.max(0, Math.min(1, totalProgress)) * 100)}%</div>}
       {message && <div className="reader-message">{message}</div>}
+      {searchOpen && (
+        <div className="toc-backdrop search-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false); }}>
+          <section className="toc-panel search-panel" aria-label="搜索全书" data-testid="book-search-panel">
+            <header><h2>搜索全书</h2><button type="button" aria-label="关闭搜索" onClick={() => setSearchOpen(false)}>×</button></header>
+            <div className="book-search-field">
+              <input
+                ref={searchInputRef}
+                aria-label="搜索当前整本书"
+                placeholder="输入一句话或几个关键词"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.currentTarget.value)}
+              />
+              <p className="book-search-status" role="status" data-testid="book-search-status">
+                {searchProgress.working
+                  ? `正在搜索全书：${searchProgress.indexed}/${searchProgress.total} 个章节${searchResults.length ? `，已找到 ${searchResults.length} 处` : ""}`
+                  : searchQuery.trim()
+                    ? `找到 ${searchResults.length} 处匹配${searchProgress.failed ? `；${searchProgress.failed} 个章节无法读取` : ""}`
+                    : `输入内容以搜索当前整本书${searchProgress.total ? `，共 ${searchProgress.total} 个章节` : ""}`}
+              </p>
+            </div>
+            {searchResults.length > 0 && (
+              <ol className="book-search-results" aria-label="全文搜索结果">
+                {searchResults.map((result) => (
+                  <li key={result.id}>
+                    <button type="button" data-testid="book-search-result" onClick={() => { void jumpToSearchResult(result); }}>
+                      <span className="book-search-chapter">{result.chapterTitle}</span>
+                      <span className="book-search-excerpt">{result.before && <span>{result.before} </span>}<strong>{result.match}</strong>{result.after && <span> {result.after}</span>}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        </div>
+      )}
       {tocOpen && (
         <div className="toc-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setTocOpen(false); }}>
           <nav className="toc-panel" aria-label="目录" data-testid="toc-panel">

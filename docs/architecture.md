@@ -59,6 +59,8 @@ Each active spine resource is sanitized and placed in a scriptless `sandbox="all
 
 The Reader supports keyboard and 23% edge navigation, forward/back chapter boundaries, hierarchical temporary TOC, current-chapter marking, Ctrl+C, day/night appearance, and re-pagination for font size, line height, margin, and resize. It has no persistent header, toolbar, sidebar, playback panel, or settings button.
 
+`Ctrl+F` opens a temporary whole-book search overlay. It reuses the existing safe chapter-loading bridge and sanitized reading-unit generation to build an on-demand, per-book, renderer-memory index across the EPUB spine; imported AZW3 books use the same persisted normalized EPUB path. Searches normalize case, whitespace, Unicode width, and common punctuation, return every matching passage with chapter/context metadata, and navigate through the existing stable reading-unit Locator. The index is neither persisted nor networked, and search adds no IPC surface or database migration.
+
 The canonical locator contains book ID, spine href, stable reading-unit selector, local progression, total spine-weighted progression, and before/highlight/after text context. Page numbers are never persisted. A 250 ms debounce saves normal movement, while chapter/book switches and unmount also preserve the latest locator. Both task-kill recovery and normal-close restart are exercised against the same SQLite database.
 
 ## E-Ink rendering boundary
